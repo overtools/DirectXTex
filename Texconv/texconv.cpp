@@ -103,7 +103,8 @@ enum OPTIONS
     OPT_FILELIST,
     OPT_ROTATE_COLOR,
     OPT_PAPER_WHITE_NITS,
-    OPT_MAX
+    OPT_MAX,
+    OPT_STDIN
 };
 
 enum
@@ -187,6 +188,7 @@ const SValue g_pOptions[] =
     { L"flist",         OPT_FILELIST },
     { L"rotatecolor",   OPT_ROTATE_COLOR },
     { L"nits",          OPT_PAPER_WHITE_NITS },
+    { L"-",             OPT_STDIN },
     { nullptr,          0 }
 };
 
@@ -1177,6 +1179,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             case OPT_FILELIST:
             case OPT_ROTATE_COLOR:
             case OPT_PAPER_WHITE_NITS:
+            case OPT_STDIN:
                 if (!*pValue)
                 {
                     if ((iArg + 1 >= argc))
@@ -1571,6 +1574,15 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                     return 1;
                 }
                 break;
+
+            case OPT_STDIN:
+            {
+                SConversion conv;
+                wcscpy_s(conv.szDest, MAX_PATH, pValue);
+                conv.szSrc[0] = 0;
+                conversion.push_back(conv);
+                break;
+            }
             }
         }
         else if (wcspbrk(pArg, L"?*") != nullptr)
@@ -1669,7 +1681,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             return 1;
         }
 
-        if (_wcsicmp(ext, L".dds") == 0)
+        if (_wcsicmp(ext, L".dds") == 0 || pConv->szSrc[0] == 0)
         {
             DWORD ddsFlags = DDS_FLAGS_NONE;
             if (dwOptions & (DWORD64(1) << OPT_DDS_DWORD_ALIGN))
@@ -1679,7 +1691,39 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             if (dwOptions & (DWORD64(1) << OPT_DDS_BAD_DXTN_TAILS))
                 ddsFlags |= DDS_FLAGS_BAD_DXTN_TAILS;
 
-            hr = LoadFromDDSFile(pConv->szSrc, ddsFlags, &info, *image);
+            if (pConv->szSrc[0] == 0)
+            {
+                wprintf(L"from stdin");
+                DWORD dwRead;
+                LPVOID chBuf = malloc(1024 * 1024);
+                BOOL bSuccess = FALSE;
+                HANDLE stdIn = GetStdHandle(STD_INPUT_HANDLE);
+                
+                LPVOID dataBuffer = malloc(0);
+                DWORD dataBufferSize = 0;
+
+                for (;;)
+                {
+                    bSuccess = ReadFile(stdIn, chBuf, 1024 * 1024, &dwRead, NULL);
+                    if (!bSuccess || dwRead == 0)
+                    {
+                        break;
+                    }
+                    dataBuffer = realloc(dataBuffer, dataBufferSize + dwRead);
+                    memcpy((LPVOID)((DWORD)dataBuffer + dataBufferSize), chBuf, dwRead);
+                    dataBufferSize += dwRead;
+                }
+
+                hr = LoadFromDDSMemory(dataBuffer, dataBufferSize, ddsFlags, &info, *image);
+
+                free(chBuf);
+                free(dataBuffer);
+            }
+            else
+            {
+                hr = LoadFromDDSFile(pConv->szSrc, ddsFlags, &info, *image);
+            }
+
             if (FAILED(hr))
             {
                 wprintf(L" FAILED (%x)\n", hr);
@@ -2815,15 +2859,30 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             wprintf(L"\n");
 
             // Figure out dest filename
-            wchar_t *pchSlash, *pchDot;
+            wchar_t *pchSlash, *pchDot, *pchStdin;
+            if (pConv->szSrc[0] == 0)
+            {
+                pchStdin = (wchar_t*)malloc(sizeof(wchar_t) * MAX_PATH);
+                pchStdin[0] = 0;
+                wcscpy_s(pchStdin, MAX_PATH, pConv->szDest);
+                pConv->szDest[0] = 0;
+            }
 
             wcscpy_s(pConv->szDest, MAX_PATH, szPrefix);
 
-            pchSlash = wcsrchr(pConv->szSrc, L'\\');
-            if (pchSlash != 0)
-                wcscat_s(pConv->szDest, MAX_PATH, pchSlash + 1);
+            if (pConv->szSrc[0] != 0)
+            {
+                pchSlash = wcsrchr(pConv->szSrc, L'\\');
+                if (pchSlash != 0)
+                    wcscat_s(pConv->szDest, MAX_PATH, pchSlash + 1);
+                else
+                    wcscat_s(pConv->szDest, MAX_PATH, pConv->szSrc);
+            }
             else
-                wcscat_s(pConv->szDest, MAX_PATH, pConv->szSrc);
+            {
+                wcscat_s(pConv->szDest, MAX_PATH, pchStdin);
+                free(pchStdin);
+            }
 
             pchSlash = wcsrchr(pConv->szDest, '\\');
             pchDot = wcsrchr(pConv->szDest, '.');
