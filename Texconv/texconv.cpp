@@ -3005,12 +3005,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             wprintf(L"\n");
 
             // Figure out dest filename
-            wchar_t *pchSlash, *pchDot, *pchStdin;
+            wchar_t *pchSlash, *pchDot, *pchStdin = NULL;
             if (pConv->szSrc[0] == 0)
             {
                 pchStdin = (wchar_t*)malloc(sizeof(wchar_t) * MAX_PATH);
                 pchStdin[0] = 0;
                 wcscpy_s(pchStdin, MAX_PATH, pConv->szDest);
+                pchStdin[lstrlenW(pConv->szDest)] = 0;
                 pConv->szDest[0] = 0;
             }
 
@@ -3024,7 +3025,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 else
                     wcscat_s(pConv->szDest, MAX_PATH, pConv->szSrc);
             }
-            else
+            else if(pchStdin != NULL && pchStdin[0] != 0)
             {
                 wcscat_s(pConv->szDest, MAX_PATH, pchStdin);
                 free(pchStdin);
