@@ -3,7 +3,7 @@ DIRECTX TEXTURE LIBRARY (DirectXTex)
 
 Copyright (c) Microsoft Corporation. All rights reserved.
 
-February 9, 2018
+June 30, 2019
 
 This package contains DirectXTex, a shared source library for reading and writing DDS
 files, and performing various texture content processing operations including
@@ -13,10 +13,14 @@ use of the Windows Image Component (WIC) APIs. It also includes simple .TGA and 
 readers and writers since these image file formats are commonly used for texture content
 processing pipelines, but are not currently supported by a built-in WIC codec.
 
-This code is designed to build with Visual Studio 2013 Update 5, Visual Studio 2015 Update 3,
-or Visual Studio 2017. It is recommended that you make use of VS 2015 Update 3, Windows Tools
-1.4.1, and the Windows 10 Anniversary Update SDK (14393) or VS 2017 (15.5 update) with the
-Windows 10 Fall Creators Update SDK (16299).
+This code is designed to build with Visual Studio 2015 Update 3, Visual Studio 2017,
+or Visual Studio 2019. It is recommended that you make use of VS 2015 Update 3,
+Windows Tools 1.4.1, and the Windows 10 Anniversary Update SDK (14393) -or-
+VS 2017 (15.9 update) / VS 2019 with the Windows 10 October 2018 Update SDK (17763).
+
+These components are designed to work without requiring any content from the
+legacy DirectX SDK. For details, see "Where is the DirectX SDK?"
+<https://aka.ms/dxsdk>.
 
 DirectXTex\
     This contains the DirectXTex library. This includes a full-featured DDS reader and writer
@@ -36,7 +40,6 @@ Texconv\
     SDK utility. The primary differences are the -10 and -11 arguments are not applicable and the
     filter names (POINT, LINEAR, CUBIC, FANT or BOX, TRIANGLE, *_DITHER, *_DITHER_DIFFUSION).
     This also includes support for the JPEG XR (HD Photo) bitmap format.
-    (see <http://blogs.msdn.com/b/chuckw/archive/2011/01/19/known-issue-texconvex.aspx>)
 
     See <https://github.com/Microsoft/DirectXTex/wiki/Texconv> for details.
 
@@ -100,34 +103,113 @@ https://opensource.microsoft.com/codeofconduct/
 ------------------------------------
 RELEASE NOTES
 
-* The alpha mode specification for DDS files was updated between the March 2013 and April 2013 releases. Any
-  DDS files created using the DDS_FLAGS_FORCE_DX10_EXT_MISC2 flag or the texconv -dx10 switch using the
-  March 2013 release should be refreshed.
+* The alpha mode specification for DDS files was updated between the March 2013
+  and April 2013 releases. Any DDS files created using the DDS_FLAGS_FORCE_DX10_EXT_MISC2
+  flag or the texconv -dx10 switch using the March 2013 release should be refreshed.
 
-* Due to the underlying Windows BMP WIC codec, alpha channels are not supported for 16bpp or 32bpp BMP pixel format
-  files. The Windows 8.x and Windows 10 version of the Windows BMP WIC codec does support 32bpp pixel formats with
-  alpha when using the BITMAPV5HEADER file header. Note the updated WIC is available on Windows 7 SP1 with KB 2670838
-  installed.
+* Due to the underlying Windows BMP WIC codec, alpha channels are not supported for 16bpp
+  or 32bpp BMP pixel format files. The Windows 8.x and Windows 10 version of the Windows
+  BMP WIC codec does support 32bpp pixel formats with alpha when using the BITMAPV5HEADER
+  file header. Note the updated WIC is available on Windows 7 SP1 with KB 2670838 installed.
 
-* While DXGI 1.0 and DXGI 1.1 include 5:6:5 (DXGI_FORMAT_B5G6R5_UNORM) and 5:5:5:1 (DXGI_FORMAT_B5G5R5A1_UNORM)
-  pixel format enumerations, the DirectX 10.x and 11.0 Runtimes do not support these formats for use with Direct3D.
-  The DirectX 11.1 runtime, DXGI 1.2, and the WDDM 1.2 driver model fully support 16bpp formats (5:6:5, 5:5:5:1, and
-   4:4:4:4).
+* While DXGI 1.0 and DXGI 1.1 include 5:6:5 (DXGI_FORMAT_B5G6R5_UNORM) and
+  5:5:5:1 (DXGI_FORMAT_B5G5R5A1_UNORM) pixel format enumerations, the DirectX 10.x and
+  11.0 Runtimes do not support these formats for use with Direct3D. The DirectX 11.1 runtime,
+  DXGI 1.2, and the WDDM 1.2 driver model fully support 16bpp formats (5:6:5, 5:5:5:1, and
+  4:4:4:4).
 
-* WICTextureLoader cannot load .TGA or .HDR files unless the system has a 3rd party WIC codec installed. You
-  must use the DirectXTex library for TGA/HDR file format support without relying on an add-on WIC codec.
+* WICTextureLoader cannot load .TGA or .HDR files unless the system has a 3rd party WIC
+  codec installed. You must use the DirectXTex library for TGA/HDR file format support
+  without relying on an add-on WIC codec.
 
-* Loading of 96bpp floating-point TIFF files results in a corrupted image prior to Windows 8. This fix is available
-  on Windows 7 SP1 with KB 2670838 installed.
+* Loading of 96bpp floating-point TIFF files results in a corrupted image prior to Windows 8.
+  This fix is available on Windows 7 SP1 with KB 2670838 installed.
 
-* The VS 2017 projects make use of /permissive- for improved C++ standard conformance. Use of a Windows 10 SDK prior to
-  the Fall Creators Update (16299) or an Xbox One XDK prior to June 2017 QFE 4 may result in failures due to problems
-  with the system headers. You can work around these by deleting /permissive- from the project files which is found
-  in the <AdditionalOptions> element.
+* The VS 2017/2019 projects make use of /permissive- for improved C++ standard
+  conformance. Use of a Windows 10 SDK prior to the Fall Creators Update (16299)
+  or an Xbox One XDK prior to June 2017 QFE 4 may result in failures due to
+  problems with the system headers. You can work around these by disabling this
+  switch in the project files which is found in the <ConformanceMode> elements.
+
+* The VS 2017 projects require the 15.5 update or later. For UWP and Win32
+  classic desktop projects with the 15.5 - 15.7 updates, you need to install the
+  standalone Windows 10 SDK (17763) which is otherwise included in the 15.8.6 or
+  later update. Older VS 2017 updates will fail to load the projects due to use
+  of the <ConformanceMode> element. If using the 15.5 or 15.6 updates, you will
+  see "warning D9002: ignoring unknown option '/Zc:__cplusplus'" because this
+  switch isn't supported until 15.7. It is safe to ignore this warning, or you
+  can edit the project files <AdditionalOptions> elements.
+
+* The UWP projects include configurations for the ARM64 platform. These require
+  VS 2017 (15.9 update) or VS 2019 to build.
 
 
 ------------------------------------
 RELEASE HISTORY
+
+June 30, 2019
+    Additional validation for Direct3D 11 texture loaders
+    Clang/LLVM warning cleanup
+    Renamed DirectXTex_Windows10.vcxproj to _Windows10_2017.vcxproj
+    Added VS 2019 UWP project
+
+May 30, 2019
+    Regenerated shaders using Windows 10 April 2019 Update SDK (18362)
+    Added CMake project files
+    Code cleanup
+
+April 26, 2019
+    Added VS 2019 desktop projects
+    Code cleanup for texture loaders
+    Officially dropped Windows Vista support
+    Minor code cleanup
+
+February 7, 2019
+    Added ScaleMipMapsAlphaForCoverage function to the library
+    WIC Writer now has two new flags: WIC_FLAGS_FORCE_SRGB and WIC_FLAGS_FORCE_LINEAR
+    texassemble: added array-strip command
+    texconv: added -inverty, -keepcoverage switches
+
+November 16, 2018
+    VS 2017 updated for Windows 10 October 2018 Update SDK (17763)
+    ARM64 platform configurations added to UWP projects
+
+October 25, 2018
+    Use UTF-8 instead of ANSI for narrow strings
+    Updated D3DX12 internal copy to latest version
+    Minor code cleanup
+
+August 17, 2018
+    Fixed problem loading legacy DDS files containing FOURCC pixel formats with ALPHAPIXELS also set
+    Fixed FlipRotate bug when doing 180 degree rotation
+    Updated for VS 2017 15.8
+
+August 5, 2018
+    Improved support and validation for 16k textures (requires x64 native)
+    ComputePitch now returns an HRESULT
+    Fix BC7 GPU shaders on WARP device
+
+July 3, 2018
+    BC7 CPU codec fix for 3subsets/-bcmax and minor optimization
+    BC7 GPU codec quantize fix and pbit optimization
+    BC6H CPU codec bounds checking fix
+    Code and project cleanup
+
+May 31, 2018
+    Fix for IsAlphaAllOpaque for 'near opaque' values
+    VS 2017 updated for Windows 10 April 2018 Update SDK (17134)
+
+May 11, 2018
+    Workaround for WIC issue doing FP32->FP16 conversions
+    Updated for VS 2017 15.7 update warnings
+    Code and project cleanup
+    Retired VS 2013 projects
+
+April 23, 2018
+    Code cleanup
+    texconv: Updated with support reading "Extended BMP" files using DXTn
+    texconv: Updated to handle non-power-of-2 volume textures with mipmaps
+    texassemble, texconv, texdiag: support format name aliases like DXT3, RGBA, BGRA, FP16, etc. in addition to truncated DXGI_FORMAT_ values
 
 February 9, 2018
     HDR (RGBE Radiance) file format reader updated to support #?RGBE signature

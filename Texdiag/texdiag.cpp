@@ -15,7 +15,6 @@
 #define NOMINMAX
 #define NODRAWTEXT
 #define NOGDI
-#define NOBITMAP
 #define NOMCX
 #define NOSERVICE
 #define NOHELP
@@ -32,7 +31,7 @@
 
 #include <dxgiformat.h>
 
-#include "directxtex.h"
+#include "DirectXTex.h"
 
 //Uncomment to add support for OpenEXR (.exr)
 //#define USE_OPENEXR
@@ -310,7 +309,10 @@ const SValue g_pFilters[] =
 #define CODEC_DDS 0xFFFF0001 
 #define CODEC_TGA 0xFFFF0002
 #define CODEC_HDR 0xFFFF0005
+
+#ifdef USE_OPENEXR
 #define CODEC_EXR 0xFFFF0006
+#endif
 
 const SValue g_pDumpFileTypes[] =
 {
@@ -355,13 +357,15 @@ const SValue g_pExtFileTypes[] =
 
 namespace
 {
-    inline HANDLE safe_handle(HANDLE h) { return (h == INVALID_HANDLE_VALUE) ? 0 : h; }
+    inline HANDLE safe_handle(HANDLE h) { return (h == INVALID_HANDLE_VALUE) ? nullptr : h; }
 
     struct find_closer { void operator()(HANDLE h) { assert(h != INVALID_HANDLE_VALUE); if (h) FindClose(h); } };
 
-    typedef public std::unique_ptr<void, find_closer> ScopedFindHandle;
+    typedef std::unique_ptr<void, find_closer> ScopedFindHandle;
 
+#ifdef _PREFAST_
 #pragma prefast(disable : 26018, "Only used with static internal arrays")
+#endif
 
     DWORD LookupByName(const wchar_t *pName, const SValue *pArray)
     {
@@ -394,7 +398,7 @@ namespace
     void SearchForFiles(const wchar_t* path, std::list<SConversion>& files, bool recursive)
     {
         // Process files
-        WIN32_FIND_DATA findData = {};
+        WIN32_FIND_DATAW findData = {};
         ScopedFindHandle hFile(safe_handle(FindFirstFileExW(path,
             FindExInfoBasic, &findData,
             FindExSearchNameMatch, nullptr,
@@ -414,7 +418,7 @@ namespace
                     files.push_back(conv);
                 }
 
-                if (!FindNextFile(hFile.get(), &findData))
+                if (!FindNextFileW(hFile.get(), &findData))
                     break;
             }
         }
@@ -459,7 +463,7 @@ namespace
                     }
                 }
 
-                if (!FindNextFile(hFile.get(), &findData))
+                if (!FindNextFileW(hFile.get(), &findData))
                     break;
             }
         }
@@ -470,7 +474,7 @@ namespace
     {
         for (const SValue *pFormat = g_pFormats; pFormat->pName; pFormat++)
         {
-            if ((DXGI_FORMAT)pFormat->dwValue == Format)
+            if (static_cast<DXGI_FORMAT>(pFormat->dwValue) == Format)
             {
                 wprintf(pFormat->pName);
                 return;
@@ -479,7 +483,7 @@ namespace
 
         for (const SValue *pFormat = g_pReadOnlyFormats; pFormat->pName; pFormat++)
         {
-            if ((DXGI_FORMAT)pFormat->dwValue == Format)
+            if (static_cast<DXGI_FORMAT>(pFormat->dwValue) == Format)
             {
                 wprintf(pFormat->pName);
                 return;
@@ -626,12 +630,12 @@ namespace
         else
         {
             // WIC shares the same filter values for mode and dither
-            static_assert(WIC_FLAGS_DITHER == TEX_FILTER_DITHER, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_DITHER_DIFFUSION == TEX_FILTER_DITHER_DIFFUSION, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_POINT == TEX_FILTER_POINT, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_LINEAR == TEX_FILTER_LINEAR, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_CUBIC == TEX_FILTER_CUBIC, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_FANT == TEX_FILTER_FANT, "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_DITHER) == static_cast<int>(TEX_FILTER_DITHER), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_DITHER_DIFFUSION) == static_cast<int>(TEX_FILTER_DITHER_DIFFUSION), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_POINT) == static_cast<int>(TEX_FILTER_POINT), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_LINEAR) == static_cast<int>(TEX_FILTER_LINEAR), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_CUBIC) == static_cast<int>(TEX_FILTER_CUBIC), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_FANT) == static_cast<int>(TEX_FILTER_FANT), "WIC_FLAGS_* & TEX_FILTER_* should match");
 
             return LoadFromWICFile(fileName, dwFilter | WIC_FLAGS_ALL_FRAMES, &info, *image);
         }
@@ -686,7 +690,7 @@ namespace
 
             if ((specials_x > 0) || (specials_y > 0) || (specials_z > 0) || (specials_w > 0))
             {
-                wprintf(L"     FP specials - (%Iu %Iu %Iu %Iu)\n", specials_x, specials_y, specials_z, specials_w);
+                wprintf(L"     FP specials - (%zu %zu %zu %zu)\n", specials_x, specials_y, specials_z, specials_w);
             }
         }
     };
@@ -705,7 +709,7 @@ namespace
 
         HRESULT hr = EvaluateImage(image, [&](const XMVECTOR * pixels, size_t width, size_t y)
         {
-            static const XMVECTORF32 s_luminance = { 0.3f, 0.59f, 0.11f, 0.f };
+            static const XMVECTORF32 s_luminance = { { {  0.3f, 0.59f, 0.11f, 0.f } } };
 
             UNREFERENCED_PARAMETER(y);
 
@@ -720,22 +724,22 @@ namespace
 
                 XMFLOAT4 f;
                 XMStoreFloat4(&f, v);
-                if (!_finite(f.x))
+                if (!isfinite(f.x))
                 {
                     ++result.specials_x;
                 }
 
-                if (!_finite(f.y))
+                if (!isfinite(f.y))
                 {
                     ++result.specials_y;
                 }
 
-                if (!_finite(f.z))
+                if (!isfinite(f.z))
                 {
                     ++result.specials_z;
                 }
 
-                if (!_finite(f.w))
+                if (!isfinite(f.w))
                 {
                     ++result.specials_w;
                 }
@@ -793,36 +797,36 @@ namespace
         {
             wprintf(L"\t        Compression - ");
             PrintFormat(fmt);
-            wprintf(L"\n\t       Total blocks - %Iu\n", blocks);
+            wprintf(L"\n\t       Total blocks - %zu\n", blocks);
 
             switch (fmt)
             {
             case DXGI_FORMAT_BC1_UNORM:
             case DXGI_FORMAT_BC1_UNORM_SRGB:
-                wprintf(L"\t     4 color blocks - %Iu\n", blockHist[0]);
-                wprintf(L"\t     3 color blocks - %Iu\n", blockHist[1]);
+                wprintf(L"\t     4 color blocks - %zu\n", blockHist[0]);
+                wprintf(L"\t     3 color blocks - %zu\n", blockHist[1]);
                 break;
 
                 // BC2 only has a single 'type' of block
 
             case DXGI_FORMAT_BC3_UNORM:
             case DXGI_FORMAT_BC3_UNORM_SRGB:
-                wprintf(L"\t     8 alpha blocks - %Iu\n", blockHist[0]);
-                wprintf(L"\t     6 alpha blocks - %Iu\n", blockHist[1]);
+                wprintf(L"\t     8 alpha blocks - %zu\n", blockHist[0]);
+                wprintf(L"\t     6 alpha blocks - %zu\n", blockHist[1]);
                 break;
 
             case DXGI_FORMAT_BC4_UNORM:
             case DXGI_FORMAT_BC4_SNORM:
-                wprintf(L"\t     8 red blocks - %Iu\n", blockHist[0]);
-                wprintf(L"\t     6 red blocks - %Iu\n", blockHist[1]);
+                wprintf(L"\t     8 red blocks - %zu\n", blockHist[0]);
+                wprintf(L"\t     6 red blocks - %zu\n", blockHist[1]);
                 break;
 
             case DXGI_FORMAT_BC5_UNORM:
             case DXGI_FORMAT_BC5_SNORM:
-                wprintf(L"\t     8 red blocks - %Iu\n", blockHist[0]);
-                wprintf(L"\t     6 red blocks - %Iu\n", blockHist[1]);
-                wprintf(L"\t   8 green blocks - %Iu\n", blockHist[2]);
-                wprintf(L"\t   6 green blocks - %Iu\n", blockHist[3]);
+                wprintf(L"\t     8 red blocks - %zu\n", blockHist[0]);
+                wprintf(L"\t     6 red blocks - %zu\n", blockHist[1]);
+                wprintf(L"\t   8 green blocks - %zu\n", blockHist[2]);
+                wprintf(L"\t   6 green blocks - %zu\n", blockHist[3]);
                 break;
 
             case DXGI_FORMAT_BC6H_UF16:
@@ -830,10 +834,10 @@ namespace
                 for (size_t j = 1; j <= 14; ++j)
                 {
                     if (blockHist[j] > 0)
-                        wprintf(L"\t     Mode %02Iu blocks - %Iu\n", j, blockHist[j]);
+                        wprintf(L"\t     Mode %02Iu blocks - %zu\n", j, blockHist[j]);
                 }
                 if (blockHist[0] > 0)
-                    wprintf(L"\tReserved mode blcks - %Iu\n", blockHist[0]);
+                    wprintf(L"\tReserved mode blcks - %zu\n", blockHist[0]);
                 break;
 
             case DXGI_FORMAT_BC7_UNORM:
@@ -841,10 +845,13 @@ namespace
                 for (size_t j = 0; j <= 7; ++j)
                 {
                     if (blockHist[j] > 0)
-                        wprintf(L"\t     Mode %02Iu blocks - %Iu\n", j, blockHist[j]);
+                        wprintf(L"\t     Mode %02Iu blocks - %zu\n", j, blockHist[j]);
                 }
                 if (blockHist[8] > 0)
-                    wprintf(L"\tReserved mode blcks - %Iu\n", blockHist[8]);
+                    wprintf(L"\tReserved mode blcks - %zu\n", blockHist[8]);
+                break;
+
+            default:
                 break;
             }
         }
@@ -1204,6 +1211,9 @@ namespace
                         ++result.blockHist[8];
                     }
                     break;
+
+                default:
+                    break;
                 }
 
                 sptr += sbpp;
@@ -1368,15 +1378,15 @@ namespace
     }
 
     //--------------------------------------------------------------------------------------
-#define SIGN_EXTEND(x,nb) ((((x)&(1<<((nb)-1)))?((~0)<<(nb)):0)|(x))
+#define SIGN_EXTEND(x,nb) ((((x)&(1<<((nb)-1)))?((~0)^((1<<(nb))-1)):0)|(x))
 
 #define NUM_PIXELS_PER_BLOCK 16 
 
     void Print565(uint16_t rgb)
     {
-        float r = (float)((rgb >> 11) & 31) * (1.0f / 31.0f);
-        float g = (float)((rgb >> 5) & 63) * (1.0f / 63.0f);
-        float b = (float)((rgb >> 0) & 31) * (1.0f / 31.0f);
+        auto r = float(((rgb >> 11) & 31) * (1.0f / 31.0f));
+        auto g = float(((rgb >> 5) & 63) * (1.0f / 63.0f));
+        auto b = float(((rgb >> 0) & 31) * (1.0f / 31.0f));
 
         wprintf(L"(R: %.3f, G: %.3f, B: %.3f)", r, g, b);
     }
@@ -1395,12 +1405,12 @@ namespace
         {
             if (IsFixUpOffset(parts, shape, j))
             {
-                wprintf(L"%I64u%ls", bitmap & 0x1, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llu%ls", bitmap & 0x1, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 1;
             }
             else
             {
-                wprintf(L"%I64u%ls", bitmap & 0x3, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llu%ls", bitmap & 0x3, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 2;
             }
         }
@@ -1412,12 +1422,12 @@ namespace
         {
             if (IsFixUpOffset(parts, shape, j))
             {
-                wprintf(L"%I64u%ls", bitmap & 0x3, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llu%ls", bitmap & 0x3, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 2;
             }
             else
             {
-                wprintf(L"%I64u%ls", bitmap & 0x7, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llu%ls", bitmap & 0x7, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 3;
             }
         }
@@ -1429,12 +1439,12 @@ namespace
         {
             if (IsFixUpOffset(parts, shape, j))
             {
-                wprintf(L"%I64X%ls", bitmap & 0x7, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llX%ls", bitmap & 0x7, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 3;
             }
             else
             {
-                wprintf(L"%I64X%ls", bitmap & 0xF, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
+                wprintf(L"%llX%ls", bitmap & 0xF, ((j < (NUM_PIXELS_PER_BLOCK - 1)) && ((j % 4) == 3)) ? L" | " : L" ");
                 bitmap >>= 4;
             }
         }
@@ -1442,7 +1452,7 @@ namespace
 
     void PrintIndex3bpp(const uint8_t data[6])
     {
-        uint32_t bitmap = data[0] | (data[1] << 8) | (data[2] << 16);
+        uint32_t bitmap = uint32_t(data[0]) | (uint32_t(data[1]) << 8) | (uint32_t(data[2]) << 16);
 
         size_t j = 0;
         for (; j < (NUM_PIXELS_PER_BLOCK / 2); ++j, bitmap >>= 3)
@@ -1450,7 +1460,7 @@ namespace
             wprintf(L"%u%ls", bitmap & 0x7, ((j % 4) == 3) ? L" | " : L" ");
         }
 
-        bitmap = data[3] | (data[4] << 8) | (data[5] << 16);
+        bitmap = uint32_t(data[3]) | (uint32_t(data[4]) << 8) | (uint32_t(data[5]) << 16);
 
         for (; j < NUM_PIXELS_PER_BLOCK; ++j, bitmap >>= 3)
         {
@@ -1521,7 +1531,7 @@ namespace
                         continue;
                 }
 
-                wprintf(L"   Block %Iu (pixel: %Iu x %Iu)\n", nblock, w, h);
+                wprintf(L"   Block %zu (pixel: %zu x %zu)\n", nblock, w, h);
                 switch (image.format)
                 {
                 case DXGI_FORMAT_BC1_UNORM:
@@ -1595,8 +1605,8 @@ namespace
                     wprintf(L"\n");
 
                     wprintf(L"\tAlpha - E0: %0.3f  E1: %0.3f (%u)\n\t     Index: ",
-                        float((float)block->alpha[0] / 255.f),
-                        float((float)block->alpha[1] / 255.f), (block->alpha[0] > block->alpha[1]) ? 8 : 6);
+                        (float(block->alpha[0]) / 255.f),
+                        (float(block->alpha[1]) / 255.f), (block->alpha[0] > block->alpha[1]) ? 8 : 6);
 
                     PrintIndex3bpp(block->bitmap);
 
@@ -1609,8 +1619,8 @@ namespace
                     auto block = reinterpret_cast<const BC4UBlock*>(sptr);
 
                     wprintf(L"\t   E0: %0.3f  E1: %0.3f (%u)\n\tIndex: ",
-                        float((float)block->red_0 / 255.f),
-                        float((float)block->red_1 / 255.f), (block->red_0 > block->red_1) ? 8 : 6);
+                        (float(block->red_0) / 255.f),
+                        (float(block->red_1) / 255.f), (block->red_0 > block->red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->indices);
 
@@ -1623,8 +1633,8 @@ namespace
                     auto block = reinterpret_cast<const BC4SBlock*>(sptr);
 
                     wprintf(L"\t   E0: %0.3f  E1: %0.3f (%u)\n\tIndex: ",
-                        float((float)block->red_0 / 127.f),
-                        float((float)block->red_1 / 127.f), (block->red_0 > block->red_1) ? 8 : 6);
+                        (float(block->red_0) / 127.f),
+                        (float(block->red_1) / 127.f), (block->red_0 > block->red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->indices);
 
@@ -1637,16 +1647,16 @@ namespace
                     auto block = reinterpret_cast<const BC5UBlock*>(sptr);
 
                     wprintf(L"\tU -   E0: %0.3f  E1: %0.3f (%u)\n\t   Index: ",
-                        float((float)block->u.red_0 / 255.f),
-                        float((float)block->u.red_1 / 255.f), (block->u.red_0 > block->u.red_1) ? 8 : 6);
+                        (float(block->u.red_0) / 255.f),
+                        (float(block->u.red_1) / 255.f), (block->u.red_0 > block->u.red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->u.indices);
 
                     wprintf(L"\n");
 
                     wprintf(L"\tV -   E0: %0.3f  E1: %0.3f (%u)\n\t   Index: ",
-                        float((float)block->v.red_0 / 255.f),
-                        float((float)block->v.red_1 / 255.f), (block->v.red_0 > block->v.red_1) ? 8 : 6);
+                        (float(block->v.red_0) / 255.f),
+                        (float(block->v.red_1) / 255.f), (block->v.red_0 > block->v.red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->v.indices);
 
@@ -1659,16 +1669,16 @@ namespace
                     auto block = reinterpret_cast<const BC5SBlock*>(sptr);
 
                     wprintf(L"\tU -   E0: %0.3f  E1: %0.3f (%u)\n\t   Index: ",
-                        float((float)block->u.red_0 / 127.f),
-                        float((float)block->u.red_1 / 127.f), (block->u.red_0 > block->u.red_1) ? 8 : 6);
+                        (float(block->u.red_0) / 127.f),
+                        (float(block->u.red_1) / 127.f), (block->u.red_0 > block->u.red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->u.indices);
 
                     wprintf(L"\n");
 
                     wprintf(L"\tV -   E0: %0.3f  E1: %0.3f (%u)\n\t   Index: ",
-                        float((float)block->v.red_0 / 127.f),
-                        float((float)block->v.red_1 / 127.f), (block->v.red_0 > block->v.red_1) ? 8 : 6);
+                        (float(block->v.red_0) / 127.f),
+                        (float(block->v.red_1) / 127.f), (block->v.red_0 > block->v.red_1) ? 8 : 6);
 
                     PrintIndex3bpp(block->v.indices);
 
@@ -1745,7 +1755,7 @@ namespace
                             e1_B.z = SIGN_EXTEND(e1_B.z, 5);
                         }
 
-                        wprintf(L"\tMode 1 - [10 5 5 5] shape %I64u\n", m->d);
+                        wprintf(L"\tMode 1 - [10 5 5 5] shape %llu\n", m->d);
                         wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                         wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                         wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -1821,7 +1831,7 @@ namespace
                             e1_B.z = SIGN_EXTEND(e1_B.z, 6);
                         }
 
-                        wprintf(L"\tMode 2 - [7 6 6 6] shape %I64u\n", m->d);
+                        wprintf(L"\tMode 2 - [7 6 6 6] shape %llu\n", m->d);
                         wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                         wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                         wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -1899,7 +1909,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 4);
                             }
 
-                            wprintf(L"\tMode 3 - [11 5 4 4] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 3 - [11 5 4 4] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -1977,7 +1987,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 4);
                             }
 
-                            wprintf(L"\tMode 4 - [11 4 5 4] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 4 - [11 4 5 4] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2050,7 +2060,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 5);
                             }
 
-                            wprintf(L"\tMode 5 - [11 4 4 5] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 5 - [11 4 4 5] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2124,7 +2134,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 5);
                             }
 
-                            wprintf(L"\tMode 6 - [9 5 5 5] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 6 - [9 5 5 5] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2198,7 +2208,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 5);
                             }
 
-                            wprintf(L"\tMode 7 - [8 6 5 5] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 7 - [8 6 5 5] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2274,7 +2284,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 5);
                             }
 
-                            wprintf(L"\tMode 8 - [8 5 6 5] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 8 - [8 5 6 5] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2350,7 +2360,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 6);
                             }
 
-                            wprintf(L"\tMode 9 - [8 5 5 6] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 9 - [8 5 5 6] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2426,7 +2436,7 @@ namespace
                                 e1_B.z = SIGN_EXTEND(e1_B.z, 6);
                             }
 
-                            wprintf(L"\tMode 10 - [6 6 6 6] shape %I64u\n", m->d);
+                            wprintf(L"\tMode 10 - [6 6 6 6] shape %llu\n", m->d);
                             wprintf(L"\t         E0(A): (%04X, %04X, %04X)\n", e0_A.x & 0xFFFF, e0_A.y & 0xFFFF, e0_A.z & 0xFFFF);
                             wprintf(L"\t         E0(B): (%04X, %04X, %04X)\n", e0_B.x & 0xFFFF, e0_B.y & 0xFFFF, e0_B.z & 0xFFFF);
                             wprintf(L"\t         E1(A): (%04X, %04X, %04X)\n", e1_A.x & 0xFFFF, e1_A.y & 0xFFFF, e1_A.z & 0xFFFF);
@@ -2659,6 +2669,9 @@ namespace
                         case 0x1F: // Reserved mode (5 bits, 11111)
                             wprintf(L"\tERROR - Reserved mode 11111\n");
                             break;
+
+                        default:
+                            break;
                         }
                         break;
                     }
@@ -2706,7 +2719,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode0*>(sptr);
 
-                        wprintf(L"\tMode 0 - [4 4 4] partition %I64u\n", m->part);
+                        wprintf(L"\tMode 0 - [4 4 4] partition %llu\n", m->part);
                         wprintf(L"\t         E0:(%0.3f, %0.3f, %0.3f)\n", float((m->r0 << 1) | m->P0) / 31.f, float((m->g0 << 1) | m->P0) / 31.f, float((m->b0 << 1) | m->P0) / 31.f);
                         wprintf(L"\t         E1:(%0.3f, %0.3f, %0.3f)\n", float((m->r1 << 1) | m->P1) / 31.f, float((m->g1 << 1) | m->P1) / 31.f, float((m->b1 << 1) | m->P1) / 31.f);
                         wprintf(L"\t         E2:(%0.3f, %0.3f, %0.3f)\n", float((m->r2 << 1) | m->P2) / 31.f, float((m->g2 << 1) | m->P2) / 31.f, float(((m->b2 | (m->b2n << 3)) << 1) | m->P2) / 31.f);
@@ -2745,7 +2758,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode1*>(sptr);
 
-                        wprintf(L"\tMode 1 - [6 6 6] partition %I64u\n", m->part);
+                        wprintf(L"\tMode 1 - [6 6 6] partition %llu\n", m->part);
                         wprintf(L"\t         E0:(%0.3f, %0.3f, %0.3f)\n", float((m->r0 << 1) | m->P0) / 127.f, float((m->g0 << 1) | m->P0) / 127.f, float((m->b0 << 1) | m->P0) / 127.f);
                         wprintf(L"\t         E1:(%0.3f, %0.3f, %0.3f)\n", float((m->r1 << 1) | m->P0) / 127.f, float((m->g1 << 1) | m->P0) / 127.f, float(((m->b1 | (m->b1n << 2)) << 1) | m->P0) / 127.f);
                         wprintf(L"\t         E2:(%0.3f, %0.3f, %0.3f)\n", float((m->r2 << 1) | m->P1) / 127.f, float((m->g2 << 1) | m->P1) / 127.f, float((m->b2 << 1) | m->P1) / 127.f);
@@ -2785,7 +2798,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode2*>(sptr);
 
-                        wprintf(L"\tMode 2 - [5 5 5] partition %I64u\n", m->part);
+                        wprintf(L"\tMode 2 - [5 5 5] partition %llu\n", m->part);
                         wprintf(L"\t         E0:(%0.3f, %0.3f, %0.3f)\n", float(m->r0) / 31.f, float(m->g0) / 31.f, float(m->b0) / 31.f);
                         wprintf(L"\t         E1:(%0.3f, %0.3f, %0.3f)\n", float(m->r1) / 31.f, float(m->g1) / 31.f, float(m->b1) / 31.f);
                         wprintf(L"\t         E2:(%0.3f, %0.3f, %0.3f)\n", float(m->r2) / 31.f, float(m->g2) / 31.f, float(m->b2) / 31.f);
@@ -2826,7 +2839,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode3*>(sptr);
 
-                        wprintf(L"\tMode 3 - [7 7 7] partition %I64u\n", m->part);
+                        wprintf(L"\tMode 3 - [7 7 7] partition %llu\n", m->part);
                         wprintf(L"\t         E0:(%0.3f, %0.3f, %0.3f)\n", float((m->r0 << 1) | m->P0) / 255.f, float((m->g0 << 1) | m->P0) / 255.f, float((m->b0 << 1) | m->P0) / 255.f);
                         wprintf(L"\t         E1:(%0.3f, %0.3f, %0.3f)\n", float((m->r1 << 1) | m->P1) / 255.f, float((m->g1 << 1) | m->P1) / 255.f, float((m->b1 << 1) | m->P1) / 255.f);
                         wprintf(L"\t         E2:(%0.3f, %0.3f, %0.3f)\n", float((m->r2 << 1) | m->P2) / 255.f, float((m->g2 << 1) | m->P2) / 255.f, float((m->b2 << 1) | m->P2) / 255.f);
@@ -2859,14 +2872,14 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode4*>(sptr);
 
-                        wprintf(L"\tMode 4 - [5 5 5 A6] indx mode %ls, rot-bits %I64u%ls\n", m->idx ? L"3-bit" : L"2-bit", m->rot, GetRotBits(m->rot));
+                        wprintf(L"\tMode 4 - [5 5 5 A6] indx mode %ls, rot-bits %llu%ls\n", m->idx ? L"3-bit" : L"2-bit", m->rot, GetRotBits(m->rot));
                         wprintf(L"\t         C0:(%0.3f, %0.3f, %0.3f)\n", float(m->r0) / 31.f, float(m->g0) / 31.f, float(m->b0) / 31.f);
                         wprintf(L"\t         C1:(%0.3f, %0.3f, %0.3f)\n", float(m->r1) / 31.f, float(m->g1) / 31.f, float(m->b1) / 31.f);
                         wprintf(L"\t         A0:(%0.3f)\n", float(m->a0) / 63.f);
                         wprintf(L"\t         A1:(%0.3f)\n", float(m->a1) / 63.f);
                         wprintf(L"\t    Colors: ");
 
-                        uint64_t color_index = m->color_index | (m->color_indexn << 14);
+                        uint64_t color_index = uint64_t(m->color_index) | uint64_t(m->color_indexn << 14);
                         if (m->idx)
                             PrintIndex3bpp(color_index, 0, 0);
                         else
@@ -2899,7 +2912,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode5*>(sptr);
 
-                        wprintf(L"\tMode 5 - [7 7 7 A8] rot-bits %I64u%ls\n", m->rot, GetRotBits(m->rot));
+                        wprintf(L"\tMode 5 - [7 7 7 A8] rot-bits %llu%ls\n", m->rot, GetRotBits(m->rot));
                         wprintf(L"\t         C0:(%0.3f, %0.3f, %0.3f)\n", float(m->r0) / 127.f, float(m->g0) / 127.f, float(m->b0) / 127.f);
                         wprintf(L"\t         C1:(%0.3f, %0.3f, %0.3f)\n", float(m->r1) / 127.f, float(m->g1) / 127.f, float(m->b1) / 127.f);
                         wprintf(L"\t         A0:(%0.3f)\n", float(m->a0) / 255.f);
@@ -2977,7 +2990,7 @@ namespace
 
                         auto m = reinterpret_cast<const bc7_mode7*>(sptr);
 
-                        wprintf(L"\tMode 7 - [5 5 5 A5] partition %I64u\n", m->part);
+                        wprintf(L"\tMode 7 - [5 5 5 A5] partition %llu\n", m->part);
                         wprintf(L"\t         C0:(%0.3f, %0.3f, %0.3f)\n", float((m->r0 << 1) | m->P0) / 63.f, float((m->g0 << 1) | m->P0) / 63.f, float((m->b0 << 1) | m->P0) / 63.f);
                         wprintf(L"\t         C1:(%0.3f, %0.3f, %0.3f)\n", float((m->r1 << 1) | m->P1) / 63.f, float((m->g1 << 1) | m->P1) / 63.f, float((m->b1 << 1) | m->P1) / 63.f);
                         wprintf(L"\t         C2:(%0.3f, %0.3f, %0.3f)\n", float((m->r2 << 1) | m->P2) / 63.f, float((m->g2 << 1) | m->P2) / 63.f, float((m->b2 << 1) | m->P2) / 63.f);
@@ -3008,7 +3021,9 @@ namespace
 //--------------------------------------------------------------------------------------
 // Entry-point
 //--------------------------------------------------------------------------------------
+#ifdef _PREFAST_
 #pragma prefast(disable : 28198, "Command-line tool, frees all memory on exit")
+#endif
 
 int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 {
@@ -3099,6 +3114,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                     iArg++;
                     pValue = argv[iArg];
                 }
+                break;
+
+            default:
                 break;
             }
 
@@ -3236,6 +3254,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                     }
                     inFile.close();
                 }
+                break;
+
+            default:
                 break;
             }
         }
@@ -3432,13 +3453,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
                                 min_mse = std::min(min_mse, mse);
                                 max_mse = std::max(max_mse, mse);
-                                sum_mse += mse;
+                                sum_mse += double(mse);
 
                                 for (size_t j = 0; j < 4; ++j)
                                 {
                                     min_mseV[j] = std::min(min_mseV[j], mseV[j]);
                                     max_mseV[j] = std::max(max_mseV[j], mseV[j]);
-                                    sum_mseV[j] += mseV[j];
+                                    sum_mseV[j] += double(mseV[j]);
                                 }
 
                                 ++total_images;
@@ -3483,13 +3504,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
                                 min_mse = std::min(min_mse, mse);
                                 max_mse = std::max(max_mse, mse);
-                                sum_mse += mse;
+                                sum_mse += double(mse);
 
                                 for (size_t j = 0; j < 4; ++j)
                                 {
                                     min_mseV[j] = std::min(min_mseV[j], mseV[j]);
                                     max_mseV[j] = std::max(max_mseV[j], mseV[j]);
-                                    sum_mseV[j] += mseV[j];
+                                    sum_mseV[j] += double(mseV[j]);
                                 }
 
                                 ++total_images;
@@ -3508,7 +3529,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                         10.0 * log10(3.0 / (double(min_mseV[0]) + double(min_mseV[1]) + double(min_mseV[2]))));
                     double total_mseV0 = sum_mseV[0] / double(total_images);
                     double total_mseV1 = sum_mseV[1] / double(total_images);
-                    double total_mseV2 = max_mseV[2] / double(total_images);
+                    double total_mseV2 = sum_mseV[2] / double(total_images);
                     wprintf(L"    Average MSE: %f (%f %f %f %f) PSNR %f dB\n", sum_mse / double(total_images),
                         total_mseV0,
                         total_mseV1,
@@ -3547,11 +3568,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             if (dwCommand == CMD_INFO)
             {
                 // --- Info ----------------------------------------------------------------
-                wprintf(L"        width = %Iu\n", info.width);
-                wprintf(L"       height = %Iu\n", info.height);
-                wprintf(L"        depth = %Iu\n", info.depth);
-                wprintf(L"    mipLevels = %Iu\n", info.mipLevels);
-                wprintf(L"    arraySize = %Iu\n", info.arraySize);
+                wprintf(L"        width = %zu\n", info.width);
+                wprintf(L"       height = %zu\n", info.height);
+                wprintf(L"        depth = %zu\n", info.depth);
+                wprintf(L"    mipLevels = %zu\n", info.mipLevels);
+                wprintf(L"    arraySize = %zu\n", info.arraySize);
                 wprintf(L"       format = ");
                 PrintFormat(info.format);
                 wprintf(L"\n    dimension = ");
@@ -3589,12 +3610,15 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 case TEX_ALPHA_MODE_STRAIGHT:
                     wprintf(L"Straight");
                     break;
-                default:
+                case TEX_ALPHA_MODE_CUSTOM:
+                    wprintf(L"Custom");
+                    break;
+                case TEX_ALPHA_MODE_UNKNOWN:
                     wprintf(L"Unknown");
                     break;
                 }
 
-                wprintf(L"\n       images = %Iu\n", image->GetImageCount());
+                wprintf(L"\n       images = %zu\n", image->GetImageCount());
 
                 auto sizeInKb = static_cast<uint32_t>(image->GetPixelsSize() / 1024);
 
@@ -3710,10 +3734,10 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                     return 1;
                 }
 
-                if (pixelx >= (int)info.width
-                    || pixely >= (int)info.height)
+                if (pixelx >= int(info.width)
+                    || pixely >= int(info.height))
                 {
-                    wprintf(L"WARNING: Specified pixel location (%d x %d) is out of range for image (%Iu x %Iu)\n", pixelx, pixely, info.width, info.height);
+                    wprintf(L"WARNING: Specified pixel location (%d x %d) is out of range for image (%zu x %zu)\n", pixelx, pixely, info.width, info.height);
                     continue;
                 }
 

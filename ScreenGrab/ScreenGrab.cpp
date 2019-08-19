@@ -80,9 +80,6 @@ namespace
     #define DDS_HEADER_FLAGS_PITCH          0x00000008  // DDSD_PITCH
     #define DDS_HEADER_FLAGS_LINEARSIZE     0x00080000  // DDSD_LINEARSIZE
 
-    #define DDS_HEIGHT 0x00000002 // DDSD_HEIGHT
-    #define DDS_WIDTH  0x00000004 // DDSD_WIDTH
-
     #define DDS_SURFACE_FLAGS_TEXTURE 0x00001000 // DDSCAPS_TEXTURE
 
     typedef struct
@@ -195,9 +192,9 @@ namespace
     //-----------------------------------------------------------------------------
     struct handle_closer { void operator()(HANDLE h) { if (h) CloseHandle(h); } };
 
-    typedef public std::unique_ptr<void, handle_closer> ScopedHandle;
+    typedef std::unique_ptr<void, handle_closer> ScopedHandle;
 
-    inline HANDLE safe_handle( HANDLE h ) { return (h == INVALID_HANDLE_VALUE) ? 0 : h; }
+    inline HANDLE safe_handle( HANDLE h ) { return (h == INVALID_HANDLE_VALUE) ? nullptr : h; }
 
     class auto_delete_file
     {
@@ -213,7 +210,7 @@ namespace
             }
         }
 
-        void clear() { m_handle = 0; }
+        void clear() { m_handle = nullptr; }
 
     private:
         HANDLE m_handle;
@@ -225,7 +222,7 @@ namespace
     class auto_delete_file_wic
     {
     public:
-        auto_delete_file_wic(ComPtr<IWICStream>& hFile, const wchar_t* szFile) : m_handle(hFile), m_filename(szFile) {}
+        auto_delete_file_wic(ComPtr<IWICStream>& hFile, const wchar_t* szFile) : m_filename(szFile), m_handle(hFile) {}
         ~auto_delete_file_wic()
         {
             if (m_filename)
@@ -235,7 +232,7 @@ namespace
             }
         }
 
-        void clear() { m_filename = 0; }
+        void clear() { m_filename = nullptr; }
 
     private:
         const wchar_t* m_filename;
@@ -434,17 +431,17 @@ namespace
     //--------------------------------------------------------------------------------------
     // Get surface information for a particular format
     //--------------------------------------------------------------------------------------
-    void GetSurfaceInfo(
+    HRESULT GetSurfaceInfo(
         _In_ size_t width,
         _In_ size_t height,
         _In_ DXGI_FORMAT fmt,
         _Out_opt_ size_t* outNumBytes,
         _Out_opt_ size_t* outRowBytes,
-        _Out_opt_ size_t* outNumRows )
+        _Out_opt_ size_t* outNumRows)
     {
-        size_t numBytes = 0;
-        size_t rowBytes = 0;
-        size_t numRows = 0;
+        uint64_t numBytes = 0;
+        uint64_t rowBytes = 0;
+        uint64_t numRows = 0;
 
         bool bc = false;
         bool packed = false;
@@ -458,7 +455,7 @@ namespace
         case DXGI_FORMAT_BC4_TYPELESS:
         case DXGI_FORMAT_BC4_UNORM:
         case DXGI_FORMAT_BC4_SNORM:
-            bc=true;
+            bc = true;
             bpe = 8;
             break;
 
@@ -505,19 +502,22 @@ namespace
             planar = true;
             bpe = 4;
             break;
+
+        default:
+            break;
         }
 
         if (bc)
         {
-            size_t numBlocksWide = 0;
+            uint64_t numBlocksWide = 0;
             if (width > 0)
             {
-                numBlocksWide = std::max<size_t>( 1, (width + 3) / 4 );
+                numBlocksWide = std::max<uint64_t>(1u, (uint64_t(width) + 3u) / 4u);
             }
-            size_t numBlocksHigh = 0;
+            uint64_t numBlocksHigh = 0;
             if (height > 0)
             {
-                numBlocksHigh = std::max<size_t>( 1, (height + 3) / 4 );
+                numBlocksHigh = std::max<uint64_t>(1u, (uint64_t(height) + 3u) / 4u);
             }
             rowBytes = numBlocksWide * bpe;
             numRows = numBlocksHigh;
@@ -525,42 +525,55 @@ namespace
         }
         else if (packed)
         {
-            rowBytes = ( ( width + 1 ) >> 1 ) * bpe;
-            numRows = height;
+            rowBytes = ((uint64_t(width) + 1u) >> 1) * bpe;
+            numRows = uint64_t(height);
             numBytes = rowBytes * height;
         }
-        else if ( fmt == DXGI_FORMAT_NV11 )
+        else if (fmt == DXGI_FORMAT_NV11)
         {
-            rowBytes = ( ( width + 3 ) >> 2 ) * 4;
-            numRows = height * 2; // Direct3D makes this simplifying assumption, although it is larger than the 4:1:1 data
+            rowBytes = ((uint64_t(width) + 3u) >> 2) * 4u;
+            numRows = uint64_t(height) * 2u; // Direct3D makes this simplifying assumption, although it is larger than the 4:1:1 data
             numBytes = rowBytes * numRows;
         }
         else if (planar)
         {
-            rowBytes = ( ( width + 1 ) >> 1 ) * bpe;
-            numBytes = ( rowBytes * height ) + ( ( rowBytes * height + 1 ) >> 1 );
-            numRows = height + ( ( height + 1 ) >> 1 );
+            rowBytes = ((uint64_t(width) + 1u) >> 1) * bpe;
+            numBytes = (rowBytes * uint64_t(height)) + ((rowBytes * uint64_t(height) + 1u) >> 1);
+            numRows = height + ((uint64_t(height) + 1u) >> 1);
         }
         else
         {
-            size_t bpp = BitsPerPixel( fmt );
-            rowBytes = ( width * bpp + 7 ) / 8; // round up to nearest byte
-            numRows = height;
+            size_t bpp = BitsPerPixel(fmt);
+            if (!bpp)
+                return E_INVALIDARG;
+
+            rowBytes = (uint64_t(width) * bpp + 7u) / 8u; // round up to nearest byte
+            numRows = uint64_t(height);
             numBytes = rowBytes * height;
         }
 
+#if defined(_M_IX86) || defined(_M_ARM) || defined(_M_HYBRID_X86_ARM64)
+        static_assert(sizeof(size_t) == 4, "Not a 32-bit platform!");
+        if (numBytes > UINT32_MAX || rowBytes > UINT32_MAX || numRows > UINT32_MAX)
+            return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+#else
+        static_assert(sizeof(size_t) == 8, "Not a 64-bit platform!");
+#endif
+
         if (outNumBytes)
         {
-            *outNumBytes = numBytes;
+            *outNumBytes = static_cast<size_t>(numBytes);
         }
         if (outRowBytes)
         {
-            *outRowBytes = rowBytes;
+            *outRowBytes = static_cast<size_t>(rowBytes);
         }
         if (outNumRows)
         {
-            *outNumRows = numRows;
+            *outNumRows = static_cast<size_t>(numRows);
         }
+
+        return S_OK;
     }
 
 
@@ -611,7 +624,7 @@ namespace
             return HRESULT_FROM_WIN32( ERROR_NOT_SUPPORTED );
 
         ComPtr<ID3D11Texture2D> pTexture;
-        HRESULT hr = pSource->QueryInterface(IID_PPV_ARGS(pTexture.GetAddressOf()));
+        HRESULT hr = pSource->QueryInterface(IID_ID3D11Texture2D, reinterpret_cast<void**>(pTexture.GetAddressOf()));
         if ( FAILED(hr) )
             return hr;
 
@@ -629,7 +642,7 @@ namespace
             desc.SampleDesc.Quality = 0;
 
             ComPtr<ID3D11Texture2D> pTemp;
-            hr = d3dDevice->CreateTexture2D( &desc, 0, pTemp.GetAddressOf() );
+            hr = d3dDevice->CreateTexture2D( &desc, nullptr, pTemp.GetAddressOf() );
             if ( FAILED(hr) )
                 return hr;
 
@@ -659,7 +672,7 @@ namespace
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
             desc.Usage = D3D11_USAGE_STAGING;
 
-            hr = d3dDevice->CreateTexture2D(&desc, 0, pStaging.ReleaseAndGetAddressOf());
+            hr = d3dDevice->CreateTexture2D(&desc, nullptr, pStaging.ReleaseAndGetAddressOf());
             if ( FAILED(hr) )
                 return hr;
 
@@ -680,7 +693,7 @@ namespace
             desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
             desc.Usage = D3D11_USAGE_STAGING;
 
-            hr = d3dDevice->CreateTexture2D(&desc, 0, pStaging.ReleaseAndGetAddressOf());
+            hr = d3dDevice->CreateTexture2D(&desc, nullptr, pStaging.ReleaseAndGetAddressOf());
             if ( FAILED(hr) )
                 return hr;
 
@@ -695,49 +708,53 @@ namespace
     //--------------------------------------------------------------------------------------
     bool g_WIC2 = false;
 
+    BOOL WINAPI InitializeWICFactory(PINIT_ONCE, PVOID, PVOID* ifactory) noexcept
+    {
+#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8) || defined(_WIN7_PLATFORM_UPDATE)
+        HRESULT hr = CoCreateInstance(
+            CLSID_WICImagingFactory2,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            __uuidof(IWICImagingFactory2),
+            ifactory
+        );
+
+        if (SUCCEEDED(hr))
+        {
+            // WIC2 is available on Windows 10, Windows 8.x, and Windows 7 SP1 with KB 2670838 installed
+            g_WIC2 = true;
+            return TRUE;
+        }
+        else
+        {
+            hr = CoCreateInstance(
+                CLSID_WICImagingFactory1,
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                __uuidof(IWICImagingFactory),
+                ifactory
+            );
+            return SUCCEEDED(hr) ? TRUE : FALSE;
+        }
+#else
+        return SUCCEEDED(CoCreateInstance(
+            CLSID_WICImagingFactory,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            __uuidof(IWICImagingFactory),
+            ifactory)) ? TRUE : FALSE;
+#endif
+    }
+
     IWICImagingFactory* _GetWIC()
     {
         static INIT_ONCE s_initOnce = INIT_ONCE_STATIC_INIT;
 
         IWICImagingFactory* factory = nullptr;
         InitOnceExecuteOnce(&s_initOnce,
-            [](PINIT_ONCE, PVOID, LPVOID *factory) -> BOOL
-            {
-            #if (_WIN32_WINNT >= _WIN32_WINNT_WIN8) || defined(_WIN7_PLATFORM_UPDATE)
-                HRESULT hr = CoCreateInstance(
-                    CLSID_WICImagingFactory2,
-                    nullptr,
-                    CLSCTX_INPROC_SERVER,
-                    __uuidof(IWICImagingFactory2),
-                    factory
-                    );
-
-                if ( SUCCEEDED(hr) )
-                {
-                    // WIC2 is available on Windows 10, Windows 8.x, and Windows 7 SP1 with KB 2670838 installed
-                    g_WIC2 = true;
-                    return TRUE;
-                }
-                else
-                {
-                    hr = CoCreateInstance(
-                        CLSID_WICImagingFactory1,
-                        nullptr,
-                        CLSCTX_INPROC_SERVER,
-                        __uuidof(IWICImagingFactory),
-                        factory
-                        );
-                    return SUCCEEDED(hr) ? TRUE : FALSE;
-                }
-            #else
-                return SUCCEEDED( CoCreateInstance(
-                    CLSID_WICImagingFactory,
-                    nullptr,
-                    CLSCTX_INPROC_SERVER,
-                    __uuidof(IWICImagingFactory),
-                    factory) ) ? TRUE : FALSE;
-            #endif
-            }, nullptr, reinterpret_cast<LPVOID*>(&factory));
+            InitializeWICFactory,
+            nullptr,
+            reinterpret_cast<LPVOID*>(&factory));
 
         return factory;
     }
@@ -745,9 +762,11 @@ namespace
 
 
 //--------------------------------------------------------------------------------------
-HRESULT DirectX::SaveDDSTextureToFile( _In_ ID3D11DeviceContext* pContext,
-                                       _In_ ID3D11Resource* pSource,
-                                       _In_z_ const wchar_t* fileName )
+_Use_decl_annotations_
+HRESULT DirectX::SaveDDSTextureToFile(
+    ID3D11DeviceContext* pContext,
+    ID3D11Resource* pSource,
+    const wchar_t* fileName )
 {
     if ( !fileName )
         return E_INVALIDARG;
@@ -834,7 +853,7 @@ HRESULT DirectX::SaveDDSTextureToFile( _In_ ID3D11DeviceContext* pContext,
         memcpy_s( &header->ddspf, sizeof(header->ddspf), &DDSPF_DX10, sizeof(DDS_PIXELFORMAT) );
 
         headerSize += sizeof(DDS_HEADER_DXT10);
-        extHeader = reinterpret_cast<DDS_HEADER_DXT10*>( reinterpret_cast<uint8_t*>(&fileHeader[0]) + sizeof(uint32_t) + sizeof(DDS_HEADER) );
+        extHeader = reinterpret_cast<DDS_HEADER_DXT10*>( fileHeader + sizeof(uint32_t) + sizeof(DDS_HEADER) );
         memset( extHeader, 0, sizeof(DDS_HEADER_DXT10) );
         extHeader->dxgiFormat = desc.Format;
         extHeader->resourceDimension = D3D11_RESOURCE_DIMENSION_TEXTURE2D;
@@ -843,7 +862,12 @@ HRESULT DirectX::SaveDDSTextureToFile( _In_ ID3D11DeviceContext* pContext,
     }
 
     size_t rowPitch, slicePitch, rowCount;
-    GetSurfaceInfo( desc.Width, desc.Height, desc.Format, &slicePitch, &rowPitch, &rowCount );
+    hr = GetSurfaceInfo( desc.Width, desc.Height, desc.Format, &slicePitch, &rowPitch, &rowCount );
+    if (FAILED(hr))
+        return hr;
+
+    if (rowPitch > UINT32_MAX || slicePitch > UINT32_MAX)
+        return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
 
     if ( IsCompressed( desc.Format ) )
     {
@@ -866,7 +890,7 @@ HRESULT DirectX::SaveDDSTextureToFile( _In_ ID3D11DeviceContext* pContext,
     if ( FAILED(hr) )
         return hr;
 
-    auto sptr = reinterpret_cast<const uint8_t*>( mapped.pData );
+    auto sptr = static_cast<const uint8_t*>( mapped.pData );
     if ( !sptr )
     {
         pContext->Unmap( pStaging.Get(), 0 );
@@ -905,12 +929,14 @@ HRESULT DirectX::SaveDDSTextureToFile( _In_ ID3D11DeviceContext* pContext,
 }
 
 //--------------------------------------------------------------------------------------
-HRESULT DirectX::SaveWICTextureToFile( _In_ ID3D11DeviceContext* pContext,
-                                       _In_ ID3D11Resource* pSource,
-                                       _In_ REFGUID guidContainerFormat, 
-                                       _In_z_ const wchar_t* fileName,
-                                       _In_opt_ const GUID* targetFormat,
-                                       _In_opt_ std::function<void(IPropertyBag2*)> setCustomProps )
+_Use_decl_annotations_
+HRESULT DirectX::SaveWICTextureToFile(
+    ID3D11DeviceContext* pContext,
+    ID3D11Resource* pSource,
+    REFGUID guidContainerFormat,
+    const wchar_t* fileName,
+    const GUID* targetFormat,
+    std::function<void(IPropertyBag2*)> setCustomProps )
 {
     if ( !fileName )
         return E_INVALIDARG;
@@ -986,7 +1012,7 @@ HRESULT DirectX::SaveWICTextureToFile( _In_ ID3D11DeviceContext* pContext,
     auto_delete_file_wic delonfail(stream, fileName);
 
     ComPtr<IWICBitmapEncoder> encoder;
-    hr = pWIC->CreateEncoder( guidContainerFormat, 0, encoder.GetAddressOf() );
+    hr = pWIC->CreateEncoder( guidContainerFormat, nullptr, encoder.GetAddressOf() );
     if ( FAILED(hr) )
         return hr;
 
@@ -1037,7 +1063,7 @@ HRESULT DirectX::SaveWICTextureToFile( _In_ ID3D11DeviceContext* pContext,
     }
     else
     {
-        // Screenshots don’t typically include the alpha channel of the render target
+        // Screenshots don't typically include the alpha channel of the render target
         switch ( desc.Format )
         {
 #if (_WIN32_WINNT >= _WIN32_WINNT_WIN8) || defined(_WIN7_PLATFORM_UPDATE)
@@ -1141,7 +1167,7 @@ HRESULT DirectX::SaveWICTextureToFile( _In_ ID3D11DeviceContext* pContext,
         ComPtr<IWICBitmap> source;
         hr = pWIC->CreateBitmapFromMemory( desc.Width, desc.Height, pfGuid,
                                            mapped.RowPitch, mapped.RowPitch * desc.Height,
-                                           reinterpret_cast<BYTE*>( mapped.pData ), source.GetAddressOf() );
+                                           static_cast<BYTE*>( mapped.pData ), source.GetAddressOf() );
         if ( FAILED(hr) )
         {
             pContext->Unmap( pStaging.Get(), 0 );
@@ -1181,7 +1207,7 @@ HRESULT DirectX::SaveWICTextureToFile( _In_ ID3D11DeviceContext* pContext,
     else
     {
         // No conversion required
-        hr = frame->WritePixels( desc.Height, mapped.RowPitch, mapped.RowPitch * desc.Height, reinterpret_cast<BYTE*>( mapped.pData ) );
+        hr = frame->WritePixels( desc.Height, mapped.RowPitch, mapped.RowPitch * desc.Height, static_cast<BYTE*>( mapped.pData ) );
         if ( FAILED(hr) )
             return hr;
     }

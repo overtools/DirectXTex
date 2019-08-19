@@ -20,28 +20,20 @@
 #if !defined(__d3d11_h__) && !defined(__d3d11_x_h__) && !defined(__d3d12_h__) && !defined(__d3d12_x_h__)
 #if defined(_XBOX_ONE) && defined(_TITLE)
 #include <d3d11_x.h>
-#define DCOMMON_H_INCLUDED
 #else
 #include <d3d11_1.h>
 #endif
 #endif
 
-#include <directxmath.h>
+#include <DirectXMath.h>
 
-#include <ocidl.h>
+#include <OCIdl.h>
 
-#define DIRECTX_TEX_VERSION 152
+#define DIRECTX_TEX_VERSION 162
 
 struct IWICImagingFactory;
 struct IWICMetadataQueryReader;
 
-#ifndef DIRECTX_NOEXCEPT
-#if defined(_MSC_VER) && (_MSC_VER < 1900)
-#define DIRECTX_NOEXCEPT
-#else
-#define DIRECTX_NOEXCEPT noexcept
-#endif
-#endif
 
 namespace DirectX
 {
@@ -78,7 +70,7 @@ namespace DirectX
         CP_FLAGS_8BPP               = 0x40000,  // Override with a legacy 8 bits-per-pixel format size
     };
 
-    void __cdecl ComputePitch(
+    HRESULT __cdecl ComputePitch(
         _In_ DXGI_FORMAT fmt, _In_ size_t width, _In_ size_t height,
         _Out_ size_t& rowPitch, _Out_ size_t& slicePitch, _In_ DWORD flags = CP_FLAGS_NONE);
 
@@ -139,7 +131,7 @@ namespace DirectX
             // Helper for miscFlags
 
         bool __cdecl IsPMAlpha() const { return ((miscFlags2 & TEX_MISC2_ALPHA_MODE_MASK) == TEX_ALPHA_MODE_PREMULTIPLIED) != 0; }
-        void __cdecl SetAlphaMode(TEX_ALPHA_MODE mode) { miscFlags2 = (miscFlags2 & ~TEX_MISC2_ALPHA_MODE_MASK) | static_cast<uint32_t>(mode); }
+        void __cdecl SetAlphaMode(TEX_ALPHA_MODE mode) { miscFlags2 = (miscFlags2 & ~static_cast<uint32_t>(TEX_MISC2_ALPHA_MODE_MASK)) | static_cast<uint32_t>(mode); }
         TEX_ALPHA_MODE __cdecl GetAlphaMode() const { return static_cast<TEX_ALPHA_MODE>(miscFlags2 & TEX_MISC2_ALPHA_MODE_MASK); }
             // Helpers for miscFlags2
 
@@ -200,6 +192,12 @@ namespace DirectX
 
         WIC_FLAGS_IGNORE_SRGB           = 0x20,
             // Ignores sRGB metadata if present in the file
+
+        WIC_FLAGS_FORCE_SRGB            = 0x40,
+            // Writes sRGB metadata into the file reguardless of format
+
+        WIC_FLAGS_FORCE_LINEAR          = 0x80,
+            // Writes linear gamma metadata into the file reguardless of format
 
         WIC_FLAGS_DITHER                = 0x10000,
             // Use ordered 4x4 dithering for any required conversions
@@ -264,13 +262,13 @@ namespace DirectX
     class ScratchImage
     {
     public:
-        ScratchImage() DIRECTX_NOEXCEPT
+        ScratchImage() noexcept
             : m_nimages(0), m_size(0), m_metadata{}, m_image(nullptr), m_memory(nullptr) {}
-        ScratchImage(ScratchImage&& moveFrom) DIRECTX_NOEXCEPT
+        ScratchImage(ScratchImage&& moveFrom) noexcept
             : m_nimages(0), m_size(0), m_metadata{}, m_image(nullptr), m_memory(nullptr) { *this = std::move(moveFrom); }
         ~ScratchImage() { Release(); }
 
-        ScratchImage& __cdecl operator= (ScratchImage&& moveFrom) DIRECTX_NOEXCEPT;
+        ScratchImage& __cdecl operator= (ScratchImage&& moveFrom) noexcept;
 
         ScratchImage(const ScratchImage&) = delete;
         ScratchImage& operator=(const ScratchImage&) = delete;
@@ -315,11 +313,11 @@ namespace DirectX
     class Blob
     {
     public:
-        Blob() DIRECTX_NOEXCEPT : m_buffer(nullptr), m_size(0) {}
-        Blob(Blob&& moveFrom) DIRECTX_NOEXCEPT : m_buffer(nullptr), m_size(0) { *this = std::move(moveFrom); }
+        Blob() noexcept : m_buffer(nullptr), m_size(0) {}
+        Blob(Blob&& moveFrom) noexcept : m_buffer(nullptr), m_size(0) { *this = std::move(moveFrom); }
         ~Blob() { Release(); }
 
-        Blob& __cdecl operator= (Blob&& moveFrom) DIRECTX_NOEXCEPT;
+        Blob& __cdecl operator= (Blob&& moveFrom) noexcept;
 
         Blob(const Blob&) = delete;
         Blob& operator=(const Blob&) = delete;
@@ -534,6 +532,11 @@ namespace DirectX
         _In_ DWORD filter, _In_ size_t levels, _Out_ ScratchImage& mipChain);
         // levels of '0' indicates a full mipchain, otherwise is generates that number of total levels (including the source base image)
         // Defaults to Fant filtering which is equivalent to a box filter
+
+    HRESULT __cdecl ScaleMipMapsAlphaForCoverage(
+        _In_reads_(nimages) const Image* srcImages, _In_ size_t nimages, _In_ const TexMetadata& metadata, _In_ size_t item,
+        _In_ float alphaReference, _Inout_ ScratchImage& mipChain);
+
 
     enum TEX_PMALPHA_FLAGS
     {

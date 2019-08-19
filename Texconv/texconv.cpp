@@ -35,7 +35,7 @@
 
 #include <wincodec.h>
 
-#include "directxtex.h"
+#include "DirectXTex.h"
 
 #include "DirectXPackedVector.h"
 
@@ -75,6 +75,7 @@ enum OPTIONS
     OPT_NOLOGO,
     OPT_TIMING,
     OPT_SEPALPHA,
+    OPT_NO_WIC,
     OPT_TYPELESS_UNORM,
     OPT_TYPELESS_FLOAT,
     OPT_PREMUL_ALPHA,
@@ -100,6 +101,8 @@ enum OPTIONS
     OPT_COLORKEY,
     OPT_TONEMAP,
     OPT_X2_BIAS,
+    OPT_PRESERVE_ALPHA_COVERAGE,
+    OPT_INVERT_Y,
     OPT_FILELIST,
     OPT_ROTATE_COLOR,
     OPT_PAPER_WHITE_NITS,
@@ -160,6 +163,7 @@ const SValue g_pOptions[] =
     { L"nologo",        OPT_NOLOGO },
     { L"timing",        OPT_TIMING },
     { L"sepalpha",      OPT_SEPALPHA },
+    { L"nowic",         OPT_NO_WIC },
     { L"tu",            OPT_TYPELESS_UNORM },
     { L"tf",            OPT_TYPELESS_FLOAT },
     { L"pmalpha",       OPT_PREMUL_ALPHA },
@@ -185,6 +189,8 @@ const SValue g_pOptions[] =
     { L"c",             OPT_COLORKEY },
     { L"tonemap",       OPT_TONEMAP },
     { L"x2bias",        OPT_X2_BIAS },
+    { L"keepcoverage",  OPT_PRESERVE_ALPHA_COVERAGE },
+    { L"inverty",       OPT_INVERT_Y },
     { L"flist",         OPT_FILELIST },
     { L"rotatecolor",   OPT_ROTATE_COLOR },
     { L"nits",          OPT_PAPER_WHITE_NITS },
@@ -386,7 +392,10 @@ const SValue g_pRotateColor[] =
 #define CODEC_HDP 0xFFFF0003
 #define CODEC_JXR 0xFFFF0004
 #define CODEC_HDR 0xFFFF0005
+
+#ifdef USE_OPENEXR
 #define CODEC_EXR 0xFFFF0006
+#endif
 
 const SValue g_pSaveFileTypes[] =   // valid formats to write to
 {
@@ -430,7 +439,7 @@ const SValue g_pFeatureLevels[] =   // valid feature levels for -fl for maximimu
 
 namespace
 {
-    inline HANDLE safe_handle(HANDLE h) { return (h == INVALID_HANDLE_VALUE) ? 0 : h; }
+    inline HANDLE safe_handle(HANDLE h) { return (h == INVALID_HANDLE_VALUE) ? nullptr : h; }
 
     struct handle_closer { void operator()(HANDLE h) { assert(h != INVALID_HANDLE_VALUE); if (h) CloseHandle(h); } };
 
@@ -438,14 +447,16 @@ namespace
 
     struct find_closer { void operator()(HANDLE h) { assert(h != INVALID_HANDLE_VALUE); if (h) FindClose(h); } };
 
-    typedef public std::unique_ptr<void, find_closer> ScopedFindHandle;
+    typedef std::unique_ptr<void, find_closer> ScopedFindHandle;
 
     inline static bool ispow2(size_t x)
     {
         return ((x != 0) && !(x & (x - 1)));
     }
 
+#ifdef _PREFAST_
 #pragma prefast(disable : 26018, "Only used with static internal arrays")
+#endif
 
     DWORD LookupByName(const wchar_t *pName, const SValue *pArray)
     {
@@ -478,7 +489,7 @@ namespace
     void SearchForFiles(const wchar_t* path, std::list<SConversion>& files, bool recursive)
     {
         // Process files
-        WIN32_FIND_DATA findData = {};
+        WIN32_FIND_DATAW findData = {};
         ScopedFindHandle hFile(safe_handle(FindFirstFileExW(path,
             FindExInfoBasic, &findData,
             FindExSearchNameMatch, nullptr,
@@ -498,7 +509,7 @@ namespace
                     files.push_back(conv);
                 }
 
-                if (!FindNextFile(hFile.get(), &findData))
+                if (!FindNextFileW(hFile.get(), &findData))
                     break;
             }
         }
@@ -543,7 +554,7 @@ namespace
                     }
                 }
 
-                if (!FindNextFile(hFile.get(), &findData))
+                if (!FindNextFileW(hFile.get(), &findData))
                     break;
             }
         }
@@ -554,7 +565,7 @@ namespace
     {
         for (const SValue *pFormat = g_pFormats; pFormat->pName; pFormat++)
         {
-            if ((DXGI_FORMAT)pFormat->dwValue == Format)
+            if (static_cast<DXGI_FORMAT>(pFormat->dwValue) == Format)
             {
                 wprintf(pFormat->pName);
                 return;
@@ -563,7 +574,7 @@ namespace
 
         for (const SValue *pFormat = g_pReadOnlyFormats; pFormat->pName; pFormat++)
         {
-            if ((DXGI_FORMAT)pFormat->dwValue == Format)
+            if (static_cast<DXGI_FORMAT>(pFormat->dwValue) == Format)
             {
                 wprintf(pFormat->pName);
                 return;
@@ -576,16 +587,16 @@ namespace
 
     void PrintInfo(const TexMetadata& info)
     {
-        wprintf(L" (%Iux%Iu", info.width, info.height);
+        wprintf(L" (%zux%zu", info.width, info.height);
 
         if (TEX_DIMENSION_TEXTURE3D == info.dimension)
-            wprintf(L"x%Iu", info.depth);
+            wprintf(L"x%zu", info.depth);
 
         if (info.mipLevels > 1)
-            wprintf(L",%Iu", info.mipLevels);
+            wprintf(L",%zu", info.mipLevels);
 
         if (info.arraySize > 1)
-            wprintf(L",%Iu", info.arraySize);
+            wprintf(L",%zu", info.arraySize);
 
         wprintf(L" ");
         PrintFormat(info.format);
@@ -622,6 +633,11 @@ namespace
             break;
         case TEX_ALPHA_MODE_STRAIGHT:
             wprintf(L" \x0e0:NonPM");
+            break;
+        case TEX_ALPHA_MODE_CUSTOM:
+            wprintf(L" \x0e0:Custom");
+            break;
+        case TEX_ALPHA_MODE_UNKNOWN:
             break;
         }
 
@@ -675,7 +691,7 @@ namespace
 
         if (!s_CreateDXGIFactory1)
         {
-            HMODULE hModDXGI = LoadLibrary(L"dxgi.dll");
+            HMODULE hModDXGI = LoadLibraryW(L"dxgi.dll");
             if (!hModDXGI)
                 return false;
 
@@ -709,6 +725,7 @@ namespace
         wprintf(L"   -vflip              vertical flip of source image\n");
         wprintf(L"   -sepalpha           resize/generate mips alpha channel separately\n");
         wprintf(L"                       from color channels\n");
+        wprintf(L"   -nowic              Force non-WIC filtering\n");
         wprintf(L"   -wrap, -mirror      texture addressing mode (wrap, mirror, or clamp)\n");
         wprintf(L"   -pmalpha            convert final texture to use premultiplied alpha\n");
         wprintf(L"   -alpha              convert premultiplied alpha to straight alpha\n");
@@ -745,9 +762,11 @@ namespace
             L"                       (defaults to 1.0)\n");
         wprintf(L"   -c <hex-RGB>        colorkey (a.k.a. chromakey) transparency\n");
         wprintf(L"   -rotatecolor <rot>  rotates color primaries and/or applies a curve\n");
-        wprintf(L"   -nits <value>       paper-white value in nits to use for HDR10 (defaults to 200.0)\n");
+        wprintf(L"   -nits <value>       paper-white value in nits to use for HDR10 (def: 200.0)\n");
         wprintf(L"   -tonemap            Apply a tonemap operator based on maximum luminance\n");
         wprintf(L"   -x2bias             Enable *2 - 1 conversion cases for unorm/pos-only-float\n");
+        wprintf(L"   -keepcoverage <ref> Preserve alpha coverage in generated mips for alpha test ref\n");
+        wprintf(L"   -inverty            Invert Y (i.e. green) channel values\n");
         wprintf(L"   -flist <filename>   use text file with a list of input files (one per line)\n");
 
         wprintf(L"\n   <format>: ");
@@ -797,7 +816,7 @@ namespace
 
         if (!s_DynamicD3D11CreateDevice)
         {
-            HMODULE hModD3D11 = LoadLibrary(L"d3d11.dll");
+            HMODULE hModD3D11 = LoadLibraryW(L"d3d11.dll");
             if (!hModD3D11)
                 return false;
 
@@ -824,7 +843,7 @@ namespace
             ComPtr<IDXGIFactory1> dxgiFactory;
             if (GetDXGIFactory(dxgiFactory.GetAddressOf()))
             {
-                if (FAILED(dxgiFactory->EnumAdapters(adapter, pAdapter.GetAddressOf())))
+                if (FAILED(dxgiFactory->EnumAdapters(static_cast<UINT>(adapter), pAdapter.GetAddressOf())))
                 {
                     wprintf(L"\nERROR: Invalid GPU adapter index (%d)!\n", adapter);
                     return false;
@@ -890,7 +909,7 @@ namespace
         if (origx > origy)
         {
             size_t x;
-            for (x = maxsize; x > 1; x >>= 1) { if (x <= targetx) break; };
+            for (x = maxsize; x > 1; x >>= 1) { if (x <= targetx) break; }
             targetx = x;
 
             float bestScore = FLT_MAX;
@@ -907,7 +926,7 @@ namespace
         else
         {
             size_t y;
-            for (y = maxsize; y > 1; y >>= 1) { if (y <= targety) break; };
+            for (y = maxsize; y > 1; y >>= 1) { if (y <= targety) break; }
             targety = y;
 
             float bestScore = FLT_MAX;
@@ -923,30 +942,30 @@ namespace
         }
     }
 
-    const XMVECTORF32 c_MaxNitsFor2084 = { 10000.0f, 10000.0f, 10000.0f, 1.f };
+    const XMVECTORF32 c_MaxNitsFor2084 = { { { 10000.0f, 10000.0f, 10000.0f, 1.f } } };
 
     const XMMATRIX c_from709to2020 =
     {
-        { 0.6274040f, 0.0690970f, 0.0163916f, 0.f },
-        { 0.3292820f, 0.9195400f, 0.0880132f, 0.f },
-        { 0.0433136f, 0.0113612f, 0.8955950f, 0.f },
-        { 0.f,        0.f,        0.f,        1.f }
+        XMVECTOR { 0.6274040f, 0.0690970f, 0.0163916f, 0.f },
+        XMVECTOR { 0.3292820f, 0.9195400f, 0.0880132f, 0.f },
+        XMVECTOR { 0.0433136f, 0.0113612f, 0.8955950f, 0.f },
+        XMVECTOR { 0.f,        0.f,        0.f,        1.f }
     };
 
     const XMMATRIX c_from2020to709 =
     {
-        { 1.6604910f,  -0.1245505f, -0.0181508f, 0.f },
-        { -0.5876411f,  1.1328999f, -0.1005789f, 0.f },
-        { -0.0728499f, -0.0083494f,  1.1187297f, 0.f },
-        { 0.f,          0.f,         0.f,        1.f }
+        XMVECTOR { 1.6604910f,  -0.1245505f, -0.0181508f, 0.f },
+        XMVECTOR { -0.5876411f,  1.1328999f, -0.1005789f, 0.f },
+        XMVECTOR { -0.0728499f, -0.0083494f,  1.1187297f, 0.f },
+        XMVECTOR { 0.f,          0.f,         0.f,        1.f }
     };
 
     const XMMATRIX c_fromP3to2020 =
     {
-        { 0.753845f, 0.0457456f, -0.00121055f, 0.f },
-        { 0.198593f, 0.941777f,   0.0176041f,  0.f },
-        { 0.047562f, 0.0124772f,  0.983607f,   0.f },
-        { 0.f,       0.f,         0.f,         1.f }
+        XMVECTOR { 0.753845f, 0.0457456f, -0.00121055f, 0.f },
+        XMVECTOR { 0.198593f, 0.941777f,   0.0176041f,  0.f },
+        XMVECTOR { 0.047562f, 0.0124772f,  0.983607f,   0.f },
+        XMVECTOR { 0.f,       0.f,         0.f,         1.f }
     };
 
     inline float LinearToST2084(float normalizedLinearValue)
@@ -1057,7 +1076,7 @@ namespace
             return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
         }
 
-        HRESULT hr = image.Initialize2D(format, header->biWidth, header->biHeight, 1, 1);
+        HRESULT hr = image.Initialize2D(format, size_t(header->biWidth), size_t(header->biHeight), 1, 1);
         if (FAILED(hr))
             return hr;
 
@@ -1088,7 +1107,9 @@ namespace
 //--------------------------------------------------------------------------------------
 // Entry-point
 //--------------------------------------------------------------------------------------
+#ifdef _PREFAST_
 #pragma prefast(disable : 28198, "Command-line tool, frees all memory on exit")
+#endif
 
 int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 {
@@ -1112,6 +1133,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     DWORD colorKey = 0;
     DWORD dwRotateColor = 0;
     float paperWhiteNits = 200.f;
+    float preserveAlphaCoverageRef = 0.0f;
 
     wchar_t szPrefix[MAX_PATH];
     wchar_t szSuffix[MAX_PATH];
@@ -1180,6 +1202,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             case OPT_ROTATE_COLOR:
             case OPT_PAPER_WHITE_NITS:
             case OPT_STDIN:
+            case OPT_PRESERVE_ALPHA_COVERAGE:
                 if (!*pValue)
                 {
                     if ((iArg + 1 >= argc))
@@ -1197,7 +1220,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             switch (dwOption)
             {
             case OPT_WIDTH:
-                if (swscanf_s(pValue, L"%Iu", &width) != 1)
+                if (swscanf_s(pValue, L"%zu", &width) != 1)
                 {
                     wprintf(L"Invalid value specified with -w (%ls)\n", pValue);
                     wprintf(L"\n");
@@ -1207,7 +1230,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 break;
 
             case OPT_HEIGHT:
-                if (swscanf_s(pValue, L"%Iu", &height) != 1)
+                if (swscanf_s(pValue, L"%zu", &height) != 1)
                 {
                     wprintf(L"Invalid value specified with -h (%ls)\n", pValue);
                     printf("\n");
@@ -1217,7 +1240,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 break;
 
             case OPT_MIPLEVELS:
-                if (swscanf_s(pValue, L"%Iu", &mipLevels) != 1)
+                if (swscanf_s(pValue, L"%zu", &mipLevels) != 1)
                 {
                     wprintf(L"Invalid value specified with -m (%ls)\n", pValue);
                     wprintf(L"\n");
@@ -1277,6 +1300,10 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case OPT_SEPALPHA:
                 dwFilterOpts |= TEX_FILTER_SEPARATE_ALPHA;
+                break;
+
+            case OPT_NO_WIC:
+                dwFilterOpts |= TEX_FILTER_FORCE_NON_WIC;
                 break;
 
             case OPT_PREFIX:
@@ -1562,15 +1589,27 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             case OPT_PAPER_WHITE_NITS:
                 if (swscanf_s(pValue, L"%f", &paperWhiteNits) != 1)
                 {
-                    wprintf(L"Invalid value specified with -nits (%ls)\n", pValue);
-                    wprintf(L"\n");
+                    wprintf(L"Invalid value specified with -nits (%ls)\n\n", pValue);
                     PrintUsage();
                     return 1;
                 }
                 else if (paperWhiteNits > 10000.f || paperWhiteNits <= 0.f)
                 {
-                    wprintf(L"-nits (%ls) parameter must be between 0 and 10000\n", pValue);
-                    wprintf(L"\n");
+                    wprintf(L"-nits (%ls) parameter must be between 0 and 10000\n\n", pValue);
+                    return 1;
+                }
+                break;
+
+            case OPT_PRESERVE_ALPHA_COVERAGE:
+                if (swscanf_s(pValue, L"%f", &preserveAlphaCoverageRef) != 1)
+                {
+                    wprintf(L"Invalid value specified with -keepcoverage (%ls)\n\n", pValue);
+                    PrintUsage();
+                    return 1;
+                }
+                else if (preserveAlphaCoverageRef < 0.0f || preserveAlphaCoverageRef > 1.0f)
+                {
+                    wprintf(L"-keepcoverage (%ls) parameter must be between 0.0 and 1.0\n\n", pValue);
                     return 1;
                 }
                 break;
@@ -1657,6 +1696,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
     // Convert images
     bool nonpow2warn = false;
     bool non4bc = false;
+    bool preserveAlphaCoverage = false;
     ComPtr<ID3D11Device> pDevice;
 
     for (auto pConv = conversion.begin(); pConv != conversion.end(); ++pConv)
@@ -1804,12 +1844,12 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
         else
         {
             // WIC shares the same filter values for mode and dither
-            static_assert(WIC_FLAGS_DITHER == TEX_FILTER_DITHER, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_DITHER_DIFFUSION == TEX_FILTER_DITHER_DIFFUSION, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_POINT == TEX_FILTER_POINT, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_LINEAR == TEX_FILTER_LINEAR, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_CUBIC == TEX_FILTER_CUBIC, "WIC_FLAGS_* & TEX_FILTER_* should match");
-            static_assert(WIC_FLAGS_FILTER_FANT == TEX_FILTER_FANT, "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_DITHER) == static_cast<int>(TEX_FILTER_DITHER), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_DITHER_DIFFUSION) == static_cast<int>(TEX_FILTER_DITHER_DIFFUSION), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_POINT) == static_cast<int>(TEX_FILTER_POINT), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_LINEAR) == static_cast<int>(TEX_FILTER_LINEAR), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_CUBIC) == static_cast<int>(TEX_FILTER_CUBIC), "WIC_FLAGS_* & TEX_FILTER_* should match");
+            static_assert(static_cast<int>(WIC_FLAGS_FILTER_FANT) == static_cast<int>(TEX_FILTER_FANT), "WIC_FLAGS_* & TEX_FILTER_* should match");
 
             DWORD wicFlags = dwFilter;
             if (FileType == CODEC_DDS)
@@ -2093,8 +2133,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                     return 1;
                 }
 
+                #ifndef NDEBUG
                 auto& tinfo = timage->GetMetadata();
-                tinfo;
+                #endif
 
                 assert(tinfo.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
                 info.format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -2122,13 +2163,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             {
             case ROTATE_709_TO_HDR10:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
                     XMVECTOR paperWhite = XMVectorReplicate(paperWhiteNits);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2155,11 +2196,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case ROTATE_709_TO_2020:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2174,13 +2215,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case ROTATE_HDR10_TO_709:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
                     XMVECTOR paperWhite = XMVectorReplicate(paperWhiteNits);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2207,11 +2248,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case ROTATE_2020_TO_709:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2226,13 +2267,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case ROTATE_P3_TO_HDR10:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
                     XMVECTOR paperWhite = XMVectorReplicate(paperWhiteNits);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2259,11 +2300,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             case ROTATE_P3_TO_2020:
                 hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                    [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
                 {
                     UNREFERENCED_PARAMETER(y);
 
-                    for (size_t j = 0; j < width; ++j)
+                    for (size_t j = 0; j < w; ++j)
                     {
                         XMVECTOR value = inPixels[j];
 
@@ -2286,8 +2327,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 return 1;
             }
 
+            #ifndef NDEBUG
             auto& tinfo = timage->GetMetadata();
-            tinfo;
+            #endif
 
             assert(info.width == tinfo.width);
             assert(info.height == tinfo.height);
@@ -2315,13 +2357,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             // Compute max luminosity across all images
             XMVECTOR maxLum = XMVectorZero();
             hr = EvaluateImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                [&](const XMVECTOR* pixels, size_t width, size_t y)
+                [&](const XMVECTOR* pixels, size_t w, size_t y)
             {
                 UNREFERENCED_PARAMETER(y);
 
-                for (size_t j = 0; j < width; ++j)
+                for (size_t j = 0; j < w; ++j)
                 {
-                    static const XMVECTORF32 s_luminance = { 0.3f, 0.59f, 0.11f, 0.f };
+                    static const XMVECTORF32 s_luminance = { { { 0.3f, 0.59f, 0.11f, 0.f } } };
 
                     XMVECTOR v = *pixels++;
 
@@ -2341,11 +2383,11 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             maxLum = XMVectorMultiply(maxLum, maxLum);
 
             hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
             {
                 UNREFERENCED_PARAMETER(y);
 
-                for (size_t j = 0; j < width; ++j)
+                for (size_t j = 0; j < w; ++j)
                 {
                     XMVECTOR value = inPixels[j];
 
@@ -2365,8 +2407,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 return 1;
             }
 
+            #ifndef NDEBUG
             auto& tinfo = timage->GetMetadata();
-            tinfo;
+            #endif
 
             assert(info.width == tinfo.width);
             assert(info.height == tinfo.height);
@@ -2468,13 +2511,13 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             XMVECTOR colorKeyValue = XMLoadColor(reinterpret_cast<const XMCOLOR*>(&colorKey));
 
             hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
-                [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t y)
+                [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
             {
-                static const XMVECTORF32 s_tolerance = { 0.2f, 0.2f, 0.2f, 0.f };
+                static const XMVECTORF32 s_tolerance = { { { 0.2f, 0.2f, 0.2f, 0.f } } };
 
                 UNREFERENCED_PARAMETER(y);
 
-                for (size_t j = 0; j < width; ++j)
+                for (size_t j = 0; j < w; ++j)
                 {
                     XMVECTOR value = inPixels[j];
 
@@ -2496,8 +2539,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                 return 1;
             }
 
+            #ifndef NDEBUG
             auto& tinfo = timage->GetMetadata();
-            tinfo;
+            #endif
 
             assert(info.width == tinfo.width);
             assert(info.height == tinfo.height);
@@ -2512,30 +2556,82 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             cimage.reset();
         }
 
+        // --- Invert Y Channel --------------------------------------------------------
+        if (dwOptions & (DWORD64(1) << OPT_INVERT_Y))
+        {
+            std::unique_ptr<ScratchImage> timage(new (std::nothrow) ScratchImage);
+            if (!timage)
+            {
+                wprintf(L"\nERROR: Memory allocation failed\n");
+                return 1;
+            }
+
+            hr = TransformImage(image->GetImages(), image->GetImageCount(), image->GetMetadata(),
+                [&](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t w, size_t y)
+            {
+                static const XMVECTORU32 s_selecty = { { { XM_SELECT_0, XM_SELECT_1, XM_SELECT_0, XM_SELECT_0 } } };
+
+                UNREFERENCED_PARAMETER(y);
+
+                for (size_t j = 0; j < w; ++j)
+                {
+                    XMVECTOR value = inPixels[j];
+
+                    XMVECTOR inverty = XMVectorSubtract(g_XMOne, value);
+
+                    outPixels[j] = XMVectorSelect(value, inverty, s_selecty);
+                }
+            }, *timage);
+            if (FAILED(hr))
+            {
+                wprintf(L" FAILED [inverty] (%x)\n", hr);
+                return 1;
+            }
+
+            #ifndef NDEBUG
+            auto& tinfo = timage->GetMetadata();
+            #endif
+
+            assert(info.width == tinfo.width);
+            assert(info.height == tinfo.height);
+            assert(info.depth == tinfo.depth);
+            assert(info.arraySize == tinfo.arraySize);
+            assert(info.mipLevels == tinfo.mipLevels);
+            assert(info.miscFlags == tinfo.miscFlags);
+            assert(info.format == tinfo.format);
+            assert(info.dimension == tinfo.dimension);
+
+            image.swap(timage);
+            cimage.reset();
+        }
+
+        // --- Determine whether preserve alpha coverage is required (if requested) ----
+        if (preserveAlphaCoverageRef > 0.0f && HasAlpha(info.format) && !image->IsAlphaAllOpaque())
+        {
+            preserveAlphaCoverage = true;
+        }
+      
         // --- Generate mips -----------------------------------------------------------
+        DWORD dwFilter3D = dwFilter;
         if (!ispow2(info.width) || !ispow2(info.height) || !ispow2(info.depth))
         {
-            if (info.dimension == TEX_DIMENSION_TEXTURE3D)
-            {
-                if (!tMips)
-                {
-                    tMips = 1;
-                }
-                else
-                {
-                    wprintf(L"\nERROR: Cannot generate mips for non-power-of-2 volume textures\n");
-                    return 1;
-                }
-            }
-            else if (!tMips || info.mipLevels != 1)
+            if (!tMips || info.mipLevels != 1)
             {
                 nonpow2warn = true;
             }
+
+            if (info.dimension == TEX_DIMENSION_TEXTURE3D)
+            {
+                // Must force triangle filter for non-power-of-2 volume textures to get correct results
+                dwFilter3D = TEX_FILTER_TRIANGLE;
+            }
         }
 
-        if ((!tMips || info.mipLevels != tMips) && (info.mipLevels != 1))
+        if ((!tMips || info.mipLevels != tMips || preserveAlphaCoverage) && (info.mipLevels != 1))
         {
             // Mips generation only works on a single base image, so strip off existing mip levels
+            // Also required for preserve alpha coverage so that existing mips are regenerated
+
             std::unique_ptr<ScratchImage> timage(new (std::nothrow) ScratchImage);
             if (!timage)
             {
@@ -2634,7 +2730,7 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
 
             if (info.dimension == TEX_DIMENSION_TEXTURE3D)
             {
-                hr = GenerateMipMaps3D(image->GetImages(), image->GetImageCount(), image->GetMetadata(), dwFilter | dwFilterOpts, tMips, *timage);
+                hr = GenerateMipMaps3D(image->GetImages(), image->GetImageCount(), image->GetMetadata(), dwFilter3D | dwFilterOpts, tMips, *timage);
             }
             else
             {
@@ -2655,6 +2751,53 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             assert(info.arraySize == tinfo.arraySize);
             assert(info.miscFlags == tinfo.miscFlags);
             assert(info.format == tinfo.format);
+            assert(info.dimension == tinfo.dimension);
+
+            image.swap(timage);
+            cimage.reset();
+        }
+
+        // --- Preserve mipmap alpha coverage (if requested) ---------------------------
+        if (preserveAlphaCoverage && info.mipLevels != 1 && (info.dimension != TEX_DIMENSION_TEXTURE3D))
+        {
+            std::unique_ptr<ScratchImage> timage(new (std::nothrow) ScratchImage);
+            if (!timage)
+            {
+                wprintf(L"\nERROR: Memory allocation failed\n");
+                return 1;
+            }
+
+            hr = timage->Initialize(image->GetMetadata());
+            if (FAILED(hr))
+            {
+                wprintf(L" FAILED [keepcoverage] (%x)\n", hr);
+                return 1;
+            }
+            
+            const size_t items = image->GetMetadata().arraySize;
+            for (size_t item = 0; item < items; ++item)
+            {
+                auto img = image->GetImage(0, item, 0);
+                assert(img);
+
+                hr = ScaleMipMapsAlphaForCoverage(img, info.mipLevels, info, item, preserveAlphaCoverageRef, *timage);
+                if (FAILED(hr))
+                {
+                    wprintf(L" FAILED [keepcoverage] (%x)\n", hr);
+                    return 1;
+                }
+            }
+
+            #ifndef NDEBUG
+            auto& tinfo = timage->GetMetadata();
+            #endif
+
+            assert(info.width == tinfo.width);
+            assert(info.height == tinfo.height);
+            assert(info.depth == tinfo.depth);
+            assert(info.arraySize == tinfo.arraySize);
+            assert(info.mipLevels == tinfo.mipLevels);
+            assert(info.miscFlags == tinfo.miscFlags);
             assert(info.dimension == tinfo.dimension);
 
             image.swap(timage);
@@ -2774,6 +2917,9 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                             }
                         }
                     }
+                    break;
+
+                default:
                     break;
                 }
 

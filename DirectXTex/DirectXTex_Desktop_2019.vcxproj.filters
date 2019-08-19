@@ -2,19 +2,19 @@
 <Project ToolsVersion="4.0" xmlns:atg="http://atg.xbox.com" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Header Files">
-      <UniqueIdentifier>{1b82e2dc-aea9-4897-8c7e-7ff2aa1ea8c8}</UniqueIdentifier>
+      <UniqueIdentifier>{68652706-b700-4472-9af7-a56a482bd896}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files">
-      <UniqueIdentifier>{d342dfd3-2538-4c06-98aa-9f8f79a9abee}</UniqueIdentifier>
+      <UniqueIdentifier>{9b7fcbc5-2533-4b88-b75b-d4803e55fa7c}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\Shaders">
-      <UniqueIdentifier>{1d9a21fa-9b40-40bd-a0d2-777ca8e2a4ca}</UniqueIdentifier>
+      <UniqueIdentifier>{eb989628-e889-44bf-837a-05c9f09b258e}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\Shaders\Compiled">
-      <UniqueIdentifier>{30730940-319b-4b9d-bc3c-f4f00029cafb}</UniqueIdentifier>
+      <UniqueIdentifier>{a674c059-ed12-4d51-b5b3-44c34ce565da}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\Shaders\Symbols">
-      <UniqueIdentifier>{ca7fdb2a-e99b-4b62-a803-629281c5ebe9}</UniqueIdentifier>
+      <UniqueIdentifier>{c0d1c51b-c157-45b8-9169-af3cc2c4f4b6}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -33,7 +33,7 @@
     <CLInclude Include="DDS.h">
       <Filter>Source Files</Filter>
     </CLInclude>
-    <CLInclude Include="DirectXTexp.h">
+    <CLInclude Include="DirectXTexP.h">
       <Filter>Source Files</Filter>
     </CLInclude>
     <ClInclude Include="filters.h">
@@ -111,6 +111,12 @@
     <None Include="Shaders\CompileShaders.cmd">
       <Filter>Source Files\Shaders</Filter>
     </None>
+    <None Include="Shaders\BC6HEncode.hlsl">
+      <Filter>Source Files\Shaders</Filter>
+    </None>
+    <None Include="Shaders\BC7Encode.hlsl">
+      <Filter>Source Files\Shaders</Filter>
+    </None>
     <None Include="Shaders\Compiled\BC6HEncode_EncodeBlockCS.inc">
       <Filter>Source Files\Shaders\Compiled</Filter>
     </None>
@@ -131,12 +137,6 @@
     </None>
     <None Include="Shaders\Compiled\BC7Encode_TryMode456CS.inc">
       <Filter>Source Files\Shaders\Compiled</Filter>
-    </None>
-    <None Include="Shaders\BC7Encode.hlsl">
-      <Filter>Source Files\Shaders</Filter>
-    </None>
-    <None Include="Shaders\BC6HEncode.hlsl">
-      <Filter>Source Files\Shaders</Filter>
     </None>
     <None Include="Shaders\Compiled\BC6HEncode_EncodeBlockCS.pdb">
       <Filter>Source Files\Shaders\Symbols</Filter>
