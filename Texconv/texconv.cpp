@@ -1734,30 +1734,49 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
             if (pConv->szSrc[0] == 0)
             {
                 wprintf(L"from stdin");
+                fflush(stdout);
                 DWORD dwRead;
-                LPVOID chBuf = malloc(1024 * 1024);
+                std::vector<uint8_t> chBuf(1024 * 1024);
                 BOOL bSuccess = FALSE;
                 HANDLE stdIn = GetStdHandle(STD_INPUT_HANDLE);
-                
-                LPVOID dataBuffer = malloc(0);
-                DWORD dataBufferSize = 0;
-
-                for (;;)
+                if(stdIn == INVALID_HANDLE_VALUE)
                 {
-                    bSuccess = ReadFile(stdIn, chBuf, 1024 * 1024, &dwRead, NULL);
-                    if (!bSuccess || dwRead == 0)
-                    {
-                        break;
-                    }
-                    dataBuffer = realloc(dataBuffer, dataBufferSize + dwRead);
-                    memcpy((LPVOID)((DWORD)dataBuffer + dataBufferSize), chBuf, dwRead);
-                    dataBufferSize += dwRead;
+                    hr = HRESULT_FROM_WIN32(GetLastError());
                 }
+                else if(GetFileType(stdIn) != FILE_TYPE_PIPE)
+                {
+                    wprintf(L"FAILED is a file!");
+                    continue;
+                }
+                else
+                {
+                    std::vector<uint8_t> dataBuffer(0);
+                    DWORD dataBufferSize = 0;
 
-                hr = LoadFromDDSMemory(dataBuffer, dataBufferSize, ddsFlags, &info, *image);
+                    for (;;)
+                    {
+                        bSuccess = ReadFile(stdIn, &chBuf[0], 1024 * 1024, &dwRead, nullptr);
 
-                free(chBuf);
-                free(dataBuffer);
+                        if (!bSuccess || dwRead == 0)
+                        {
+                            break;
+                        }
+                        dataBuffer.insert(dataBuffer.end(), &chBuf[0], &chBuf[dwRead]);
+                        dataBufferSize += dwRead;
+                    }
+                    wprintf(L" read %d bytes", dataBufferSize);
+                    wprintf(L" first 8 bytes: %X%X%X%X%X%X%X%X", dataBuffer[0], dataBuffer[1], dataBuffer[2], dataBuffer[3], dataBuffer[4], dataBuffer[5], dataBuffer[6], dataBuffer[7]);
+                    fflush(stdout);
+
+                    int start = 0;
+                    if(dataBuffer[0] == 0xEF && dataBuffer[1] == 0xBB && dataBuffer[2] == 0xBF)
+                    {
+                        // oh lord.
+                        start = 3;
+                    }
+
+                    hr = LoadFromDDSMemory(&dataBuffer[start], dataBufferSize, ddsFlags, &info, *image);
+                }
             }
             else
             {
