@@ -1756,8 +1756,6 @@ int __cdecl wmain(_In_ int argc, _In_z_count_(argc) wchar_t* argv[])
                         dataBuffer.insert(dataBuffer.end(), &chBuf[0], &chBuf[dwRead]);
                         dataBufferSize += dwRead;
                     }
-                    wprintf(L" read %d bytes", dataBufferSize);
-                    wprintf(L" first 8 bytes: %X%X%X%X%X%X%X%X", dataBuffer[0], dataBuffer[1], dataBuffer[2], dataBuffer[3], dataBuffer[4], dataBuffer[5], dataBuffer[6], dataBuffer[7]);
                     fflush(stdout);
 
                     int start = 0;
