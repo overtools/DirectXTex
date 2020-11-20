@@ -18,14 +18,16 @@
 
 #include <d3d12.h>
 
+#include <cstdint>
 #include <memory>
 #include <vector>
-#include <stdint.h>
 
 
 namespace DirectX
 {
-    enum DDS_ALPHA_MODE
+#ifndef DDS_ALPHA_MODE_DEFINED
+#define DDS_ALPHA_MODE_DEFINED
+    enum DDS_ALPHA_MODE : uint32_t
     {
         DDS_ALPHA_MODE_UNKNOWN       = 0,
         DDS_ALPHA_MODE_STRAIGHT      = 1,
@@ -33,12 +35,13 @@ namespace DirectX
         DDS_ALPHA_MODE_OPAQUE        = 3,
         DDS_ALPHA_MODE_CUSTOM        = 4,
     };
+#endif
 
     enum DDS_LOADER_FLAGS
     {
-        DDS_LOADER_DEFAULT = 0,
-        DDS_LOADER_FORCE_SRGB = 0x1,
-        DDS_LOADER_MIP_RESERVE = 0x8,
+        DDS_LOADER_DEFAULT      = 0,
+        DDS_LOADER_FORCE_SRGB   = 0x1,
+        DDS_LOADER_MIP_RESERVE  = 0x8,
     };
 
     // Standard version
